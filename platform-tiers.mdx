@@ -1,77 +1,83 @@
 ---
 title: "Platform tiers: when a bad respondent is caught"
-description: "How VerifyYou catches bad respondents across every survey platform, and when in the flow that catch happens."
+description: "Every platform we support enforces the HumanCheck \u2014 the tier tells you how early in the flow that enforcement fires."
 ---
 
-Every platform we support enforces VerifyYou. The question is not whether a bot or repeat-taker becomes a valid, paid, counted response. It is when in the flow they are stopped. We organize platforms into three tiers based on that timing.
+Every platform we support enforces the HumanCheck. The question is not whether a bot or a duplicate respondent becomes a valid, paid, counted response. It is *when* they are stopped.
+
+We organize platforms into three tiers based on that timing.
 
 ## The three tiers at a glance
 
-| Tier | When enforcement happens | What a bad respondent experiences |
+| Tier | When enforcement fires | What a bad respondent experiences |
 |---|---|---|
-| **True gate** | Before any question loads | Never sees the survey |
-| **Soft gate + auto-reject** | The instant they submit | Completes the form, then is rejected and deleted automatically |
-| **Direct-call** | Before the response is saved by your code | Never produces a stored response |
+| **True gate** | Before the first question loads | Never sees the survey |
+| **Soft gate + auto-reject** | The instant they submit | Sees the form, submits, is deleted automatically |
+| **Direct-call** | Before your code writes the response | Never produces a stored record |
+
+The tier is a timing property. It is not a security property. In every tier listed here, a bot or repeat-taker cannot become a valid, paid, counted respondent.
 
 ---
 
 ## True gate
 
-The token is checked before the survey renders. A respondent who fails or skips the VerifyYou check never reaches the first question. There is no window for gaming.
+The token is checked before the survey renders. A respondent who fails or skips the HumanCheck never reaches question one. There is no window, no survey text seen, no completion code earned.
 
 **Platforms that reach this tier:**
 
-- **Qualtrics** using single-use personal links (the token rides in the contact list entry)
-- **Alchemer** using login or password protection (credentials generated from the VerifyYou token)
-- **MTurk** using a VerifyYou-issued qualification
-- **Any researcher-hosted wrapper page** that calls `GET /v3/survey/peek` and only renders an `<iframe>` or redirect on `verified: true`
+- **Qualtrics** using Invitation Only distribution with single-use personal links — the link is the token; once used it is gone
+- **Alchemer** using the Login/Password Action loaded with one-time passwords generated from the HumanCheck token — confirm with your Alchemer account whether the OTP burns on login-click or only on form completion, since the behavior differs by configuration
+- **MTurk** using a VerifyYou-issued custom Qualification — a true gate and the cheapest enforcement mechanism in the MTurk ecosystem
+- **Any researcher-hosted wrapper page** that calls `GET /v3/survey/peek` and only renders the iframe or redirect when it receives `verified: true`
 
 <Tip>
-A wrapper page you host is always a true gate, regardless of what survey tool sits behind it. If you control the entry point, you control the tier.
+A wrapper page you host is always a true gate, regardless of what survey tool sits behind it. If you control the entry point, you control the tier. That means Typeform, Jotform, or any other soft-gate platform can be promoted to true-gate simply by wrapping it.
 </Tip>
 
 ---
 
 ## Soft gate + auto-reject
 
-The respondent enters the survey and submits it. At the moment of submission, a webhook fires to your endpoint (or ours, if you use a platform-native integration), which calls `GET /v3/survey/peek` to check the token. If the token is missing, expired, already burned, or belongs to the wrong flow, the platform API deletes the response automatically. No bad response reaches your CSV or your data export.
+A respondent enters the survey and submits it. The moment submission fires, a webhook calls your endpoint, which validates the token against `GET /v3/survey/peek`. If the token is missing, expired, already burned, or bound to a different flow, your handler calls the platform API and deletes the response. No bad response reaches your CSV, your data export, or your billing event.
 
 **Platforms that reach this tier:**
 
-- Typeform
-- Jotform
-- Tally
-- SurveyMonkey
-- Google Forms
+- **Typeform**
+- **Jotform** — note that hidden-required fields do NOT block submission in Jotform; deletion via the webhook is the enforcement mechanism, not the form itself
+- **Tally** — the webhook must DELETE the bad submission, not merely flag it; flagging alone leaves the response in your data
+- **SurveyMonkey** — Advanced Branching on a custom variable can disqualify on page one, which means a bad respondent may not see the full survey; still confirm server-side via webhook
+- **Google Forms** — via an Apps Script `deleteResponse` triggered by the webhook
 
-The honest trade-off: the respondent does see the survey and experiences what looks like a completion. They are rejected shortly after, before the response is recorded or paid. In practice this means no bad response ever appears in your data, but it does mean a determined bad actor sees your question text once.
+The honest trade-off: the respondent does see the survey and, from their perspective, completes it. They are rejected and removed shortly after, before the response is recorded or paid. A determined bad actor sees your question text once. They do not get a completion credit, a reward, or a second chance.
 
 <Note>
-On these platforms, `POST /v3/survey/consume` is called only after the webhook confirms the response will be accepted, not at submission. This is intentional: `GET /v3/survey/peek` is idempotent and does not burn the token, so you can call it safely from a webhook without risk of prematurely consuming a valid token.
+`GET /v3/survey/peek` is idempotent and does not burn the token — you can call it safely from a webhook without risk of prematurely consuming a valid response. Use `POST /v3/survey/consume` only once you have confirmed the response will be accepted and recorded.
 </Note>
 
 ---
 
 ## Direct-call
 
-Your own code, or a platform like Formspark that exposes server-side submission hooks, calls `GET /v3/survey/peek` before writing the response to storage. If the check fails, the write never happens. This behaves like a true gate from a data-integrity standpoint, even if the form itself loaded in the browser.
+Your own code, or a platform like Formspark that exposes a server-side submission hook, calls `GET /v3/survey/peek` before writing anything to storage. If the check fails, the write never happens. From a data-integrity standpoint this behaves like a true gate, even if the form itself loaded in the browser.
 
-**Platforms and patterns that reach this tier:**
+**Platforms and patterns in this tier:**
 
-- Formspark (server-side submission handler)
-- Your own application calling the VerifyYou API directly before persisting a record
+- **Formspark** — a JavaScript submit handler calls `peek` before the native submit; the gate fires before save
+- **Your own application** calling the VerifyYou API directly before persisting a record
 
 ---
 
 ## Bypassable does not mean insecure
 
+A soft-gate platform loads the survey before checking the respondent. Some teams hear that and worry. The worry is understandable. The concern is misplaced.
+
 Opening a survey page is not the same as producing a response that counts or gets paid.
 
-On soft-gate platforms, a respondent who skips the VerifyYou check and goes directly to the survey URL will submit a response with no token, or a token that fails validation. The webhook deletes it. They receive no completion code and no payment.
+A respondent who skips the HumanCheck and goes directly to the survey URL will submit with no token, or a token that fails validation. Your webhook deletes the submission. They receive no completion code and no payment. The response never appears in your data.
 
-More importantly, the uniqueness guarantee closes the repeat-taker problem regardless of tier. Every token is bound to one unique face. The same person cannot earn a second token for the same study, because our system records the face hash and refuses to mint again. So even if someone completes the visible survey, they cannot repeat it under a second identity to accumulate responses.
+More importantly, the uniqueness guarantee closes the repeat-taker problem regardless of tier. Every token is bound to one unique face. The same person cannot earn a second token for the same study, because the system records the face vector and refuses to mint again. Even if someone completes the visible survey, they cannot do it twice under a second identity to accumulate responses or completes.
 
-The tier tells you how early the check fires. It does not change what the check guarantees.
+The tier tells you *how early* the check fires. It does not change what the check guarantees.
 
 ---
 
@@ -79,18 +85,39 @@ The tier tells you how early the check fires. It does not change what the check 
 
 <CardGroup cols={3}>
   <Card title="True gate" icon="shield-halved">
-    Use when you want zero exposure: no question text, no form, no experience for anyone who has not passed the check.
+    Use when you want zero exposure: no question text, no form experience, no survey at all for anyone who has not passed the check. The right choice when your question text is sensitive or proprietary, or when a latency window between submission and deletion is unacceptable.
   </Card>
   <Card title="Soft gate + auto-reject" icon="circle-check">
-    Use when your survey platform handles webhooks and you want managed platform-native integrations without hosting your own entry layer.
+    Use when your platform handles webhooks and you want platform-native integrations without hosting your own entry layer. The result in your data is identical: no bad response survives.
   </Card>
   <Card title="Direct-call" icon="code">
-    Use when you own the submission path and want the tightest possible control with no third-party webhook dependency.
+    Use when you own the submission path and want the tightest possible control with no third-party webhook dependency. The gate is in your hands.
   </Card>
 </CardGroup>
 
-For a full list of platform-specific setup guides, see [Survey platform overview](/survey/overview).
+---
 
-<Note>
-The tier is about **when** a bad respondent is caught, never whether. In every tier listed here, a bot or repeat-taker cannot become a valid, paid, counted respondent.
-</Note>
+## Questions teams ask
+
+<AccordionGroup>
+  <Accordion title="Can a bad respondent on a soft-gate platform just refresh and try again?">
+    No. The uniqueness check is at the HumanCheck level, not the token level. The same face cannot earn a second token for the same study. A bot that fails liveness cannot earn a token at all. A repeated attempt gets the same result.
+  </Accordion>
+  <Accordion title="What happens if the webhook is slow and the platform records the response before it arrives?">
+    Your webhook calls `GET /v3/survey/peek` (idempotent, does not burn the token) and then calls the platform API to delete the response if the check fails. A slow webhook means a brief window where the response exists in the platform's database before deletion. It is never exported, never paid, and never appears in your data. Qualtrics with Invitation Only single-use links is the cleanest path if any latency window is unacceptable.
+  </Accordion>
+  <Accordion title="Can I promote a soft-gate platform to a true gate?">
+    Yes. Host a wrapper page that calls `GET /v3/survey/peek` and only renders the iframe or redirect on `verified: true`. The wrapper page is always a true gate, regardless of what sits behind it. See the platform guides for worked examples.
+  </Accordion>
+  <Accordion title="Does the tier affect what we charge?">
+    No. Pricing is per unique verified human, not per tier or per platform. See [What it costs](/what-it-costs).
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Where to go next
+
+For platform-specific setup guides — endpoints, webhook payloads, and the exact configuration steps for each tool — see [Survey platform overview](/survey/overview).
+
+To understand the token mechanics that underpin every tier, see [The token](/the-token) and [The validate endpoint](/build/validate-endpoint).

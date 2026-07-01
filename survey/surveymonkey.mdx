@@ -1,42 +1,39 @@
 ---
 title: "SurveyMonkey"
-description: "Add deepfake-resistant human verification to SurveyMonkey surveys using Advanced Branching to screen out bad respondents before any question is answered, backed by a webhook-and-delete backstop."
+description: "SurveyMonkey can do more than log a token for later: Advanced Branching (Premier) reads a custom variable on page 1 and disqualifies on the first page turn, before your question blocks render, paired with a response_completed webhook that deletes anything that slips through."
 ---
 
-
-SurveyMonkey can do more than capture a token for later review. With **Advanced Branching** (a Premier-plan feature) you can read a custom variable on page 1, disqualify a respondent before any question loads, and pair that with a `response_completed` webhook that deletes any response that slipped through. That makes SurveyMonkey a **soft gate plus webhook auto-reject**, not capture-only.
+SurveyMonkey is not capture-only. With **Advanced Branching** — a Premier-plan feature, distinct from basic skip logic — you can read a custom variable on page 1 and disqualify a respondent on the first page turn, before your question blocks render. Pair that with a `response_completed` webhook and a Response DELETE, and bad tokens never become counted, paid completes. The page-1 branch is your soft gate. The webhook delete is the backstop.
 
 <Note>
-Advanced Branching is distinct from SurveyMonkey's basic skip logic. Basic skip logic cannot read custom variables. Advanced Branching can, and it is required for the page-1 screen-out described here. Advanced Branching is available on Premier plans and above.
+Advanced Branching and basic skip logic are not the same thing. Basic skip logic cannot read custom variables. Advanced Branching can, and it is required for the page-1 screen-out described here. Advanced Branching is a Premier plan feature.
 </Note>
 
 ## How it works
 
-The flow follows the standard two-leg shape: a VerifyYou-gated link in the middle, your recruitment source on one side, and SurveyMonkey on the other. The two sides never touch each other.
+The flow follows the same two-leg shape as every other platform: recruitment source on one side, your survey on the other, and the HumanCheck sitting in the middle. The two sides never see each other.
 
-1. The respondent clicks your recruitment link (from Prolific, a panel, an email, wherever).
-2. You route them through the VerifyYou liveness and uniqueness check first (see [choosing your flow](/choosing-your-flow)).
-3. On a pass, VerifyYou returns them to SurveyMonkey with `?vyt=TOKEN` appended to your survey URL. You configure this in the dashboard as the **success redirect**.
+1. The respondent clicks your recruitment link — from a panel, Prolific, an email, wherever you source sample.
+2. They pass through the HumanCheck first: liveness (a live person, not a photo, replay, or generated face), then uniqueness (never seen this face before in this Flow).
+3. On a pass, VerifyYou returns them to your SurveyMonkey collector URL with `?vyt=TOKEN` appended. You set this as the **success redirect** in the VerifyYou dashboard.
 4. SurveyMonkey picks up `vyt` as a custom variable on entry.
-5. Advanced Branching on page 1 reads that variable: if it is empty or clearly malformed, it routes the respondent to a DISQUALIFY outcome with a redirect before any survey question is shown.
-6. If they pass the entry branch and complete the survey, your `response_completed` webhook fires. You call `GET /v3/survey/peek?vyt=TOKEN` to check the token, then call `DELETE /surveys/{id}/responses/{id}` on the SurveyMonkey API to remove any response that fails.
+5. Advanced Branching on page 1 reads that variable. If it is empty or malformed, the respondent is routed to a DISQUALIFY outcome with a redirect — before any question block renders.
+6. Respondents who clear the branch complete the survey. Your `response_completed` webhook fires, you peek the token server-side, and if it fails you DELETE the response via the SurveyMonkey API.
 
-The page-1 branch is your soft gate. The webhook delete is the backstop. Together they mean a bad or missing token never becomes a counted, paid response.
+A respondent without a token hits the page-1 wall immediately. One who somehow carries a bad token through is caught and deleted before the response is kept.
 
 ## Step-by-step setup
 
 <Steps>
 
-<Step title="Create your VerifyYou flow">
-In the VerifyYou dashboard, create a Flow for this study. Copy the **Flow ID** and generate a **pk_val_ validation key** for webhook use. Set the **success redirect URL** to your SurveyMonkey collector URL.
+<Step title="Create your VerifyYou Flow">
+In the VerifyYou dashboard, create a Flow for this study. Copy the **Flow ID** and generate a **pk_val_ validation key** — you will need it in the webhook step. Set the **success redirect URL** to your SurveyMonkey collector URL.
 
-There is no failure redirect in the dashboard yet. Respondents who fail liveness or uniqueness stay on the VerifyYou result screen. Factor this into your recruitment messaging so they know what to expect.
+There is no failure redirect in the dashboard yet. Respondents who fail liveness or uniqueness remain on the VerifyYou result screen. Build that expectation into your recruitment messaging.
 </Step>
 
-<Step title="Configure the custom variable in SurveyMonkey">
-In your survey's **Custom Variables** settings, add a variable named `vyt`. SurveyMonkey will populate it automatically from the `?vyt=` query parameter when a respondent arrives at your collector URL.
-
-You do not need to add a visible field for this. It travels as a hidden collector variable.
+<Step title="Add the vyt custom variable">
+In your survey's **Custom Variables** settings, add a variable named `vyt`. SurveyMonkey populates it automatically from the `?vyt=` query parameter when a respondent lands on your collector URL. No visible field is required. It travels as a hidden collector variable.
 </Step>
 
 <Step title="Add Advanced Branching on page 1">
@@ -45,22 +42,22 @@ On page 1 of your survey, before any question block, add an Advanced Branching r
 - **Condition:** custom variable `vyt` is empty (or does not match a basic format check if you want to be stricter).
 - **Action:** disqualify and redirect to a screen-out page of your choice.
 
-Respondents who arrive without a token, or who navigated directly to the survey URL, hit this branch immediately. No questions are served.
+Anyone who navigates directly to the survey URL — or arrives from a source that skipped the HumanCheck — hits this branch immediately. No questions are served.
 
 <Warning>
-Basic skip logic cannot read custom variables. If you are not on a Premier plan, the page-1 branch is not available. In that case, the webhook-and-delete backstop is your only enforcement layer, which means respondents can see and answer questions before being rejected. Upgrade or consider a platform that supports a true gate without a plan upgrade (see [Qualtrics](/survey/qualtrics) or [Alchemer](/survey/alchemer)).
+Basic skip logic cannot read custom variables. If you are not on a Premier plan, the page-1 branch is unavailable, and respondents can see and answer questions before the webhook removes their response. If you need a true pre-content gate without a plan upgrade, see [Qualtrics](/survey/qualtrics) or [Alchemer](/survey/alchemer).
 </Warning>
 </Step>
 
 <Step title="Wire the response_completed webhook">
-In SurveyMonkey's **Webhook** settings, add a `response_completed` webhook pointing to an endpoint you control (your own server, a Vercel function, or a simple proxy).
+In SurveyMonkey's **Webhook** settings, add a `response_completed` webhook pointing to an endpoint you control — your own server, a Vercel function, a simple proxy.
 
-When your endpoint receives the event:
+When the event arrives:
 
 1. Extract the response ID and the `vyt` custom variable value from the payload.
 2. Call `GET /v3/survey/peek?vyt=TOKEN` with your `pk_val_` key in the `Authorization: Bearer` header.
 3. If `verified` is `false` or the token is missing, call `DELETE /surveys/{survey_id}/responses/{response_id}` on the SurveyMonkey API to remove the response.
-4. If `verified` is `true`, optionally call `POST /v3/survey/consume?vyt=TOKEN` to burn the token and record the completion.
+4. If `verified` is `true`, call `POST /v3/survey/consume?vyt=TOKEN` to burn the token and record the final completion.
 
 ```http
 GET /v3/survey/peek?vyt=TOKEN HTTP/1.1
@@ -77,12 +74,12 @@ Authorization: Bearer YOUR_SM_ACCESS_TOKEN
 ```
 
 <Note>
-`peek` is idempotent. It does not burn the token, so you can call it at the entry branch and again from the webhook without conflict. `consume` burns the token exactly once, on final acceptance.
+`peek` is idempotent and does not burn the token. `consume` burns it exactly once. Call `consume` on a verified response to mark the completion and prevent token reuse after the TTL window expires.
 </Note>
 </Step>
 
 <Step title="Pass your participant ID through">
-If you are using a panel (Prolific, Lucid, or similar), pass the participant ID to your VerifyYou initialization call using `pass_params`. VerifyYou appends it to the return URL alongside `?vyt=`, so SurveyMonkey receives both the token and the participant identifier in the same landing URL.
+If you are recruiting from a panel — Prolific, Lucid, or similar — pass the participant ID through using `pass_params` in your initialization call. VerifyYou appends it to the return URL alongside `?vyt=`, so SurveyMonkey receives both the token and the participant identifier in the same landing URL.
 
 ```http
 POST /v3/initialize HTTP/1.1
@@ -92,57 +89,74 @@ Authorization: Bearer pk_YOUR_KEY
 {
   "verification_id": "flow_abc123",
   "origin": "https://yoursite.com",
-  "pass_params": "PROLIFIC_PID={{%PROLIFIC_PID%}}",
-  "return_path": "/your-survey-collector"
+  "return_path": "/redirect-to-survey",
+  "pass_params": { "PROLIFIC_PID": "{{%PROLIFIC_PID%}}" }
 }
 ```
 
-Map `PROLIFIC_PID` to a second custom variable in SurveyMonkey if you want to store it in your response data.
+Your return page at `origin + return_path` receives `?vyt=TOKEN&PROLIFIC_PID=...` and forwards the respondent to your SurveyMonkey collector with both parameters. Map `PROLIFIC_PID` to a second custom variable in SurveyMonkey if you want it in your response data.
 </Step>
 
 </Steps>
 
-## Enforcement tiers on SurveyMonkey
+## What each plan gets you
 
 <CardGroup cols={2}>
 
 <Card title="Soft gate (Premier)" icon="shield-halved">
-Advanced Branching reads the `vyt` variable on page 1 and disqualifies respondents before any question loads. Requires a Premier plan. This is the recommended setup.
+Advanced Branching reads the `vyt` variable on page 1 and disqualifies before any question loads. Requires a Premier plan. This is the recommended setup.
 </Card>
 
 <Card title="Webhook backstop (all plans)" icon="rotate">
-`response_completed` fires, you peek the token, and delete the response via the API if it fails. Available on all plans. Respondents may see questions before rejection, but bad responses are never kept.
+`response_completed` fires, you peek the token, and delete the response via the API if it fails. Available on every plan. Respondents may see questions before rejection, but the response is never kept.
 </Card>
 
-<Card title="What is stopped" icon="circle-xmark">
-Repeat takers are stopped at the uniqueness layer: the same face cannot earn a second token, so they never re-enter regardless of enforcement tier.
+<Card title="What is stopped regardless" icon="circle-xmark">
+Repeat takers are stopped at the uniqueness layer. The same face cannot earn a second token, so they cannot re-enter the Flow — regardless of which enforcement tier you use.
 </Card>
 
 <Card title="The honest catch" icon="triangle-exclamation">
-Without Premier, the entry branch is unavailable. The webhook deletes the response after submission, not before. A determined respondent sees your questions but their answer is never counted or paid.
+The page-1 branch checks whether `vyt` is present, not whether it is genuinely valid. Full token validation happens in the webhook. Without Premier, the webhook is your only enforcement line.
 </Card>
 
 </CardGroup>
 
-## Token mechanics, briefly
-
-The `vyt` value is a random opaque string we minted when this face passed liveness and uniqueness. It only matches if we created it, and we only create one per unique face per Flow. When your webhook calls `peek`, we look it up in our records: is it real, unused, for this Flow, and within the time window? All four must be yes. A guessed or copied string fails. A token from a different Flow fails. Sharing a real token is limited by uniqueness: the sharer already spent their face on it, and no one else can earn another.
-
-See [how tokens work](/the-token) for the full detail.
-
 ## Trade-offs at a glance
 
-| | With Premier + Advanced Branching | Without Premier |
+| | Premier + Advanced Branching | Without Premier |
 |---|---|---|
 | Questions visible before rejection | No | Yes (webhook deletes after) |
-| Respondent sees disqualify screen | Immediately | After submitting |
-| Webhook still required | Yes, as backstop | Yes, as primary enforcement |
-| Repeat takers blocked | Yes (uniqueness) | Yes (uniqueness) |
+| Respondent sees disqualify screen | Immediately on page 1 | After submitting |
+| Webhook still required | Yes — backstop layer | Yes — primary enforcement |
+| Repeat takers blocked | Yes (uniqueness layer) | Yes (uniqueness layer) |
 
-## Related pages
+## Questions teams ask
 
-- [Choosing your flow](/choosing-your-flow): picking between recruitment sources and enforcement tiers.
-- [Prolific](/recruitment/prolific): the most common recruitment leg paired with SurveyMonkey.
-- [Qualtrics](/survey/qualtrics): true gate via single-use personal links, no plan upgrade needed.
-- [Alchemer](/survey/alchemer): true gate via login credentials, strong enforcement at entry.
-- [Webhooks reference](/build/validate-endpoint): full webhook payload schema and retry behavior.
+<AccordionGroup>
+
+<Accordion title="Is SurveyMonkey capture-only?">
+No — that is the common misread. Basic skip logic is capture-only because it cannot read custom variables. Advanced Branching (Premier) can, and it disqualifies on page 1 before any question renders. That is not capture-only; that is a soft gate. The webhook DELETE is then a backstop, not the primary mechanism.
+</Accordion>
+
+<Accordion title="What if a respondent shares their token URL with someone else?">
+The token has a short TTL (~30 minutes) and is minted per unique face. Within that window, a shared URL carrying a valid token would pass the page-1 presence check — the branch only confirms `vyt` is non-empty, not that it is genuine. Full validation happens in the webhook: `peek` confirms the token is real and `consume` burns it once, so the first completion locks the token and a second use of the same URL fails validation. The real backstop is calling `consume` promptly on every verified completion. Repeat *takers* are stopped at the uniqueness layer — the same face cannot earn a second token — but the sharing window is a real gap. Token TTL and `consume` are your defenses. If you need stronger entry-time validation, see [Qualtrics](/survey/qualtrics) via single-use personal links.
+</Accordion>
+
+<Accordion title="Can I use this without a Premier plan?">
+Yes, but with a degraded experience. The webhook-and-delete backstop works on all plans. Respondents will see your questions before their response is removed. If that exposure is a problem — either for data integrity or for respondent experience — upgrade to Premier or use a platform that gates at entry without a plan requirement: [Qualtrics](/survey/qualtrics) via single-use personal links, or [Alchemer](/survey/alchemer) via one-time passwords.
+</Accordion>
+
+<Accordion title="Does the webhook fire on a disqualified (branched-out) respondent?">
+No. SurveyMonkey's `response_completed` webhook fires when a respondent reaches the end of the survey. A respondent disqualified by the page-1 branch never completes; no webhook fires for them. The webhook is therefore acting on completes only — which is exactly what you want the backstop to cover.
+</Accordion>
+
+</AccordionGroup>
+
+## Where to go next
+
+- [The token](/the-token) — how the `vyt` value works, what peek and consume do, and why a guessed or copied string always fails.
+- [Choosing your flow](/choosing-your-flow) — comparing enforcement tiers across platforms before you commit to a setup.
+- [Prolific](/recruitment/prolific) — the most common recruitment leg paired with SurveyMonkey; how pass_params works alongside the token.
+- [Qualtrics](/survey/qualtrics) — true gate via single-use personal links, no plan upgrade required.
+- [Alchemer](/survey/alchemer) — true gate via one-time passwords at login, strong enforcement at entry.
+- [Validate endpoint](/build/validate-endpoint) — full reference for peek, consume, token TTL, and rate limits.

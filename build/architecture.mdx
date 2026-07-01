@@ -1,22 +1,22 @@
 ---
-title: "Architecture: the two legs, a shared core, connector families"
-description: "How VerifyYou's backend is organized: a small shared core plus reusable connector families that platforms slot into, not an NxM integration matrix."
+title: "Architecture: shared core and connector families"
+description: "How the VerifyYou backend is structured: a small shared core that every survey tool and recruitment source plugs into, organized by four connector families rather than a per-platform integration matrix."
 ---
 
-The full build is smaller than it looks. Once you see the shape, every survey tool and every recruitment source is just a slot in the same two-leg frame. This page describes that shape from the inside, for the engineers building and maintaining it.
+The full build is smaller than it looks. Once you see the shape, every survey tool and recruitment source is just a slot in the same two-leg frame. This page describes that shape from the inside, for engineers building and maintaining it.
 
 ## What we have today vs. what is new
 
 **Today (v3 API, live)**
 
-- `POST /v3/initialize` starts a hosted liveness + uniqueness session and returns a URL. On completion the respondent is forwarded to `ORIGIN + RETURN_PATH?vyt=TOKEN&vyc=1` (or `vyc=0` on failure). `pass_params` carries participant identifiers (for example `PROLIFIC_PID`) through on the return URL.
+- `POST /v3/initialize` starts a hosted liveness and uniqueness session and returns a URL. On completion the respondent is forwarded to `ORIGIN + RETURN_PATH?vyt=TOKEN&vyc=1` — or `vyc=0` on failure. `pass_params` carries participant identifiers (for example `PROLIFIC_PID`) through on the return URL.
 - `GET /v3/confirmations/TOKEN` (secret `sk_` key) confirms a token. `POST /v3/confirmations/TOKEN/lock` burns it.
-- A no-code share link (`app.verifyyou.com/verification/ID`) and a success redirect URL exist in the dashboard. A failure or screen-out redirect does not exist yet.
+- A no-code share link (`app.verifyyou.com/verification/ID`) and a success redirect URL in the dashboard. A failure or screen-out redirect does not exist yet.
 
-**New (to build, described in present tense below)**
+**New (to build — described in present tense below)**
 
 - `GET /v3/survey/peek?vyt=TOKEN` and `POST /v3/survey/consume?vyt=TOKEN`, the split validate/burn pair. See [/build/validate-endpoint](/build/validate-endpoint).
-- A per-Flow publishable validation key (`pk_val_FLOW_RAND`).
+- A per-Verification publishable validation key (`pk_val_`).
 - A failure/screen-out redirect on the verification itself.
 - Per-verification config stored server-side.
 - Activity-log enrichment and CSV export.
@@ -25,23 +25,23 @@ The full build is smaller than it looks. Once you see the shape, every survey to
 
 ## The shared core
 
-These five pieces are built once and reused by every connector family.
+Five pieces, built once, reused by every connector family.
 
 <CardGroup cols={2}>
   <Card title="pk_val validation key" icon="key">
-    A per-Flow publishable key that can peek and consume tokens but cannot read PII or create anything. Safe to store in a survey tool's server-side credential store. Revocable per Flow without rotating the main secret key.
+    A per-Verification publishable key that can peek and consume tokens but cannot read PII or create sessions. Safe to store in a survey tool's server-side credential store. Revocable per Verification without rotating the main secret key.
   </Card>
   <Card title="peek / consume split" icon="code-branch">
-    `peek` is idempotent: call it at entry, call it again from a webhook, the token stays alive. `consume` burns it exactly once, called only when a real completion is accepted. This split lets you enforce at the gate and backstop with a webhook without double-burning.
+    `peek` is idempotent: call it at entry, call it again from a webhook — the token stays alive. `consume` burns it exactly once, only when a real completion is accepted. The split lets you enforce at the gate and backstop with a webhook without double-burning.
   </Card>
   <Card title="Failure redirect" icon="arrow-turn-down">
-    A screen-out URL stored per verification. When `vyc=0` comes back on the return URL, the respondent is forwarded there instead of into the survey. Today this redirect must be handled in your wrapper logic; the dashboard field is the new build.
+    A screen-out URL stored per verification. When `vyc=0` arrives on the return URL, the respondent is forwarded there before the survey ever loads. Today this must be handled in wrapper logic; the dashboard field is the new build.
   </Card>
   <Card title="Per-verification config" icon="sliders">
-    Server-side record per verification storing: survey platform, recruitment platform, survey URL or ID, screen-out URL, and the researcher's connected platform API token (for webhook auto-delete). Connectors read this config; researchers set it once.
+    A server-side record per verification storing: survey platform, recruitment platform, survey URL or ID, screen-out URL, and the researcher's connected platform API token for webhook auto-delete. Connectors read this config; researchers set it once.
   </Card>
   <Card title="Activity log + CSV export" icon="table-list">
-    Enriched per-session event log (initialized, verified, consumed, webhook fired, response deleted) with timestamps and the external tracker value. Exportable as CSV for audit and reconciliation.
+    Enriched per-session event log — initialized, verified, consumed, webhook fired, response deleted — with timestamps and the external tracker value. Exportable as CSV for audit and reconciliation.
   </Card>
 </CardGroup>
 
@@ -49,45 +49,55 @@ These five pieces are built once and reused by every connector family.
 
 ## Connector families
 
-There are four families. A platform slots into one or more of them. The families do not depend on each other, which is why the build scales: adding a new survey tool means writing one webhook adapter, not touching the gate logic.
+There are four families. A platform slots into one or more of them. They do not depend on each other, which is what makes the build scale: adding a new survey tool means writing one adapter, not touching gate logic.
 
-### Family A: Single-use link or credential
+### Family A — Single-use link or credential
 
 **Platforms: Qualtrics Distributions, Alchemer OTP pool, MTurk qualification**
 
-The token is embedded into a single-use URL or credential that the survey platform issues and controls. The platform enforces exactly-once access natively. VerifyYou's job is to generate that credential and deliver it to the platform's API after verification passes.
+The token is embedded into a single-use URL or credential that the survey platform issues and controls. The platform enforces exactly-once access natively; VerifyYou's job is to generate that credential and deliver it to the platform's API after verification passes.
 
-Build: one shared credential-delivery step at the end of the VerifyYou flow. Per-platform adapters call the platform's distribution or OTP API. No entry-gate wrapper needed; the platform's own link mechanism is the gate.
-
-### Family B: Wrapper or embed entry gate
-
-**Platforms: Typeform, Jotform, Tally, SurveyMonkey, Google Forms, and any URL-addressable form**
-
-A hosted wrapper page intercepts the respondent before the survey loads. It calls `peek` with the `vyt` from the URL, and only forwards to the survey if the token is valid. If `vyt` is missing or fails, the respondent is shown the screen-out path.
-
-Build: one hosted wrapper service (a small edge function or Next.js page) plus thin per-platform embed adapters that know how to construct the survey entry URL with the token passed through. The wrapper logic itself is shared; only the URL construction differs per platform.
+One shared credential-delivery step at the end of the VerifyYou flow. Per-platform adapters call the platform's distribution or OTP API. No entry-gate wrapper needed — the platform's own link mechanism is the gate.
 
 <Note>
-The wrapper is also the right home for the failure redirect: when `vyc=0` arrives from VerifyYou, the wrapper reads the screen-out URL from per-verification config and redirects there before the survey ever loads.
+Qualtrics carries a known timing edge: the Web Service element fires before the response is fully committed, so a webhook-delete backstop (Family C) is worth running in parallel. The single-use Distribution link is still the primary gate.
 </Note>
 
-### Family C: Webhook auto-delete backstop
+<Note>
+Alchemer OTP pool: confirm live whether an OTP burns on login-click or only on completion before marking this gate as closed.
+</Note>
 
-**Platforms: Typeform, Jotform, Tally, SurveyMonkey, Google Forms (via Apps Script)**
+### Family B — Wrapper or embed entry gate
+
+**Platforms: Typeform, Jotform, Tally, SurveyMonkey, Google Forms, any URL-addressable form**
+
+A hosted wrapper page intercepts the respondent before the survey loads. It calls `peek` with the `vyt` from the URL and only forwards to the survey if the token is valid. If `vyt` is missing or fails, the respondent hits the screen-out path.
+
+One hosted wrapper service — a small edge function or Next.js page — plus thin per-platform adapters that know how to construct the survey entry URL with the token passed through. The wrapper logic is shared; only the URL construction differs per platform.
+
+<Note>
+The wrapper is the right home for the failure redirect. When `vyc=0` arrives from VerifyYou, the wrapper reads the screen-out URL from per-verification config and redirects there before the survey loads.
+</Note>
+
+### Family C — Webhook auto-delete backstop
+
+**Platforms: Typeform, Jotform, Tally, SurveyMonkey, Google Forms (via Apps Script), Qualtrics (backstop)**
 
 When a respondent submits the survey, the platform fires a completion webhook to a shared VerifyYou receiver. The receiver reads the `vyt` hidden-field value, calls `peek`, and if the token is missing, invalid, or already consumed, calls the platform's delete-response API to remove the submission before it reaches any CSV or dashboard.
 
-Build: one shared webhook receiver endpoint. Per-platform adapters implement the signature-verification (each platform signs its webhooks differently) and the delete-response API call. Google Forms has no native webhook; an Apps Script snippet in the form's bound script handles the submission event and posts to the shared receiver.
+One shared webhook receiver endpoint. Per-platform adapters implement signature verification (each platform signs its webhooks differently) and the delete-response API call. Google Forms has no native webhook; an Apps Script snippet in the form's bound script handles the submission event and posts to the shared receiver.
 
-`consume` is called by the receiver only after a valid response is accepted, ensuring the token cannot be reused even if the webhook fires twice.
+`consume` is called by the receiver only after a valid response is accepted, so the token cannot be reused even if the webhook fires twice.
 
-### Family D: Direct call
+Family C is always paired with Family B for platforms that lack a single-use link mechanism. For Qualtrics it runs as a backstop alongside Family A.
+
+### Family D — Direct call
 
 **Platforms: Formspark, own application**
 
-The destination code calls `peek` (or `consume`) directly before saving a response. No wrapper, no webhook adapter needed. This is effectively a true gate in terms of enforcement timing.
+The destination code calls `peek` (or `consume`) directly before saving a response. No wrapper, no webhook adapter. Enforcement timing is effectively identical to a true gate.
 
-Build: zero per-platform build. Document the two endpoints and the `pk_val` key. Formspark users add a [custom action](https://formspark.io/docs/custom-action); app developers call the endpoint from their own handler.
+Zero per-platform build. Document the two endpoints and the `pk_val` key. Formspark users add a custom action; app developers call the endpoint from their own handler.
 
 ---
 
@@ -95,13 +105,13 @@ Build: zero per-platform build. Document the two endpoints and the `pk_val` key.
 
 Two recruitment sources need specific handling at the entry point, before the VerifyYou check starts.
 
-**Prolific: Secure External URL JWT verification**
+**Prolific — Secure External URL JWT verification**
 
-Prolific can sign the redirect with a JWT so you can confirm the respondent actually came from Prolific, not a guessed link. The shared core verifies this JWT at entry, before initializing a verification session. Prolific integration details are at [/recruitment/prolific](/recruitment/prolific).
+Prolific signs the redirect with a short-lived RS256 JWT so you can confirm the respondent actually came from Prolific, not a guessed link. The shared core verifies this JWT at entry against Prolific's JWKS endpoint before initializing a verification session. Details at [/recruitment/prolific](/recruitment/prolific).
 
-**Cint: S2S postback**
+**Cint — S2S postback**
 
-Cint expects a server-to-server postback when a respondent completes or is disqualified. The shared core fires this postback from the VerifyYou server, not from the respondent's browser, so it cannot be spoofed by a respondent who intercepts the URL.
+Cint expects a server-to-server postback when a respondent completes or is disqualified. The shared core fires this postback from the VerifyYou server, not from the respondent's browser, so it cannot be spoofed by someone intercepting the return URL. Browser redirects fail silently in panel webviews; S2S does not.
 
 ---
 
@@ -115,19 +125,19 @@ Cint expects a server-to-server postback when a respondent completes or is disqu
     No new code, just documentation. Validates the endpoint design against a real integration (Formspark) before building adapters on top.
   </Step>
   <Step title="Family C (webhook receiver)">
-    Build the shared receiver and the first two per-platform delete adapters (Typeform and Jotform are the highest-volume platforms). Google Forms Apps Script snippet ships here.
+    Build the shared receiver and the first two per-platform delete adapters — Typeform and Jotform, the highest-volume platforms. The Google Forms Apps Script snippet ships here.
   </Step>
   <Step title="Family B (wrapper/embed gate)">
     Build the shared wrapper service. Wire per-platform URL construction adapters. Connect to the failure redirect from step 1.
   </Step>
   <Step title="Family A (credential delivery)">
-    Build per-platform distribution adapters (Qualtrics first, then Alchemer OTP pool, then MTurk qualification).
+    Build per-platform distribution adapters — Qualtrics first (Distributions API + Family C backstop wired), then Alchemer OTP pool (confirm burn timing before marking closed), then MTurk qualification.
   </Step>
   <Step title="Recruitment hardening">
     Add Prolific JWT verification and Cint S2S postback to the entry flow.
   </Step>
   <Step title="Activity log + CSV export">
-    Enrich the event log and expose the export. Can ship in parallel with any of the above once the per-verification config store is live.
+    Enrich the event log and expose the export. Can ship in parallel with any step above once the per-verification config store from step 1 is live.
   </Step>
 </Steps>
 

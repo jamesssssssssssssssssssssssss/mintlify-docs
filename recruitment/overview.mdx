@@ -1,57 +1,62 @@
 ---
-title: "Recruitment platforms: the entry leg"
-description: "How VerifyYou slots into your recruitment platform: where the gated link goes, what rejections cost, and how to harden each setup."
+title: "Recruitment platforms"
+description: "Where the gated link goes on each recruitment platform, what a screen-out costs you, and how to harden each setup."
 ---
 
-The recruitment leg is the first half of the two-leg shape. It changes exactly two things: where you paste the gated link, and what a rejection costs. Everything else stays the same.
+The recruitment leg changes exactly two things: where you paste the gated link, and what a rejection costs. Everything else stays the same.
 
-You paste the gated link wherever the platform lets you set an external study URL, project link, or share link. Respondents click it, complete the liveness and uniqueness check, and land on your survey with `?vyt=TOKEN` appended. The platform never touches our API. The only variation across recruitment platforms is where that link physically goes and what happens, financially and logistically, when a respondent fails the check.
+Respondents click the link, pass liveness and uniqueness, and land on your survey with `?vyt=TOKEN` appended. Your recruitment platform never touches our API. The variation across platforms is where that link physically lives and what happens — financially and logistically — when someone fails the check.
 
 <Info>
-The recruitment leg and the survey leg are independent. You choose them separately. This page covers recruitment only. For enforcement inside the survey, see [Survey platforms overview](/survey/overview).
+The recruitment leg and the survey leg are independent choices. This page covers recruitment only. For enforcement inside the survey, see [Survey platforms overview](/survey/overview).
 </Info>
 
-## What a rejection costs
+## What a screen-out actually costs you
 
-When a respondent fails our check, we redirect them to your origin URL with `vyc=0` rather than a token. What the platform does with that depends on how you handle the return:
+A weak gate is not just a data-quality problem. On most panels, a bad complete costs you more than a screen-out would — but the math shifts by platform.
 
-- On **Prolific**, a screen-out is a paid event: you owe roughly $0.14 or more per rejection. That means a weak survey-leg gate (one that lets bad respondents past the entry URL and into the form) is also a direct cost, not just a data-quality risk. A stronger gate saves money, not just cleaner data.
-- On **MTurk**, a Worker who cannot complete the HIT earns nothing. The screen-out is free.
-- On **Cint and Lucid**, a terminated respondent is a free terminate in most panel agreements, so the cost is low, but a missing S2S postback means the panel does not know the session closed cleanly.
-- On **your own list**, there is no panel fee at all. A "not eligible" landing page is enough.
+On **Prolific**, a screen-out is a paid event. Roughly $0.19 per rejection, regardless of whether the respondent touched your survey. A respondent who clears your HumanCheck but slips past a soft survey gate becomes a full complete you pay for whether the data is clean or not. Stronger enforcement at the survey leg saves money, not just cleaner data.
 
-## Platform table
+On **MTurk**, a worker who cannot complete the HIT earns nothing. The screen-out is free. That changes the calculus: a true gate via the Qualification mechanism is both the cheapest and the cleanest option.
 
-| Platform | Where the link goes | What a rejection costs | Best hardening |
+On **Cint and Lucid**, terminated respondents are free in most panel agreements. The risk is not the fee — it is a missing S2S postback that leaves the panel marking the session as a drop-off instead of a clean terminate, which degrades your standing with the provider over time.
+
+On **your own list**, there is no panel fee at all. A "not eligible" page is all you need.
+
+## Platform comparison
+
+| Platform | Where the link goes | Screen-out cost | Best hardening |
 |---|---|---|---|
-| Prolific | External study URL field | Screen-out fee (~$0.14+ per reject, paid) | Secure External URL with signed JWT; every saved screen-out is real money |
-| MTurk | HIT external URL | Free return, Worker earns nothing | Qualification-based true gate; Workers without the qualification cannot accept the HIT |
-| CloudResearch | Project link | Partial pay depending on your partial-completes settings | Set partial-completes policy to unpaid for failed checks |
-| Cint / Lucid | Panel entry link (carries `RID`) | Free terminate in most agreements | S2S postback so the panel marks the session closed rather than a drop-off |
-| Your own list (email or social) | Share the link directly | A "not eligible" page you control; no fee | None required, you control the whole flow |
+| Prolific | External study URL field | Screen-out fee (~$0.19 per reject, paid) | Secure External URL with signed JWT verified at entry |
+| MTurk | HIT external URL | Free — worker earns nothing | Custom Qualification: workers without it cannot see the HIT |
+| CloudResearch | Project link | Small screen-out payment required | Set partial-completes policy to unpaid where the platform permits |
+| Cint / Lucid | Panel entry link (carries `RID`) | Free terminate in most agreements | S2S postback so the panel records a clean close, not a drop-off |
+| Your own list | Paste the link directly | None — you control the return page | A "not eligible" landing that checks `vyc=0` on load |
+
+Where hardening pays off most: Prolific and MTurk. Prolific because screen-outs cost you real money. MTurk because the Qualification mechanism gives you a true gate — no token, no work, no partial pay — and it is the cheapest option on the platform.
 
 ## Per-platform guidance
 
 <CardGroup cols={2}>
-  <Card title="Prolific" icon="graduation-cap">
-    The highest-stakes recruitment leg because screen-outs cost money. Use the Secure External URL option with a signed JWT so Prolific can verify the return. See [Prolific setup](/recruitment/prolific).
+  <Card title="Prolific" icon="graduation-cap" href="/recruitment/prolific">
+    The highest-stakes recruitment leg because screen-outs are paid events. Use the Secure External URL option with a signed JWT so Prolific can verify the return. Every saved screen-out is real money.
   </Card>
-  <Card title="MTurk" icon="amazon">
-    The Qualification mechanism gives you a true gate: Workers without a passing VerifyYou qualification simply cannot see the HIT. No token, no work. See [MTurk setup](/recruitment/mturk).
+  <Card title="MTurk" icon="amazon" href="/recruitment/mturk">
+    The Qualification mechanism is a true gate: workers without a passing HumanCheck qualification cannot see the HIT at all. No token, no work, no partial pay.
   </Card>
-  <Card title="CloudResearch" icon="flask">
-    Paste your gated link as the project URL. Set the partial-completes policy to unpaid so respondents who fail the check do not receive payment. See [CloudResearch setup](/recruitment/cloudresearch).
+  <Card title="CloudResearch" icon="flask" href="/recruitment/cloudresearch">
+    Paste your gated link as the project URL. A small screen-out payment is required; set the partial-completes policy to unpaid where the platform allows so respondents who fail the check do not receive payment.
   </Card>
-  <Card title="Cint and Lucid" icon="network-wired">
-    The panel sends a `RID` in the entry URL. Pass it through `pass_params` so it rides back on the return URL and the panel can reconcile the session. Wire an S2S postback for clean terminates. See [Cint / Lucid setup](/recruitment/cint-lucid).
+  <Card title="Cint and Lucid" icon="network-wired" href="/recruitment/cint-lucid">
+    The panel sends an `RID` in the entry URL. Pass it through `pass_params` so it rides back on the return URL and the panel can reconcile the session. Wire an S2S postback for clean terminates — browser redirects fail silently in panel webviews.
   </Card>
 </CardGroup>
 
 ## Using your own list
 
-If you are recruiting from your own email list, a social post, or a direct share, you control the whole flow. Paste the VerifyYou gated link directly in the message. There is no panel fee and no partial-pay exposure.
+If you are recruiting from your own email list, a social post, or a direct share, you control the whole flow. Paste the VerifyYou share link directly in the message. No panel fee, no partial-pay exposure.
 
-The only thing to configure is what happens after a failed check. Because there is no failure redirect in the dashboard yet (it is on the build list), the respondent lands on your origin URL with `vyc=0`. Build a short "not eligible" page at that origin and check `vyc` on load to show the right message.
+The one thing to configure is what happens after a failed check. Because a dedicated failure redirect URL does not exist yet (it is on the build list), a respondent who fails lands on your origin URL with `vyc=0`. Build a short "not eligible" page at that origin and check `vyc` on load to show the right message.
 
 <Note>
 A failure redirect URL is on the VerifyYou build list. For now, handle `vyc=0` on your return page.
@@ -59,13 +64,13 @@ A failure redirect URL is on the VerifyYou build list. For now, handle `vyc=0` o
 
 ## The link itself
 
-However you recruit, the link you paste is always the same shape. Generate it from the dashboard or via the API:
+However you recruit, the link you share is always the same shape. The no-code option is the share link from your dashboard:
 
 ```
 https://app.verifyyou.com/verification/FLOW_ID
 ```
 
-Or, if you need to inject participant IDs or custom parameters at link-generation time, call `POST /v3/initialize` and use the returned `url`. The `pass_params` field carries any participant identifier (for example `PROLIFIC_PID` or `RID`) back on the return URL, so your survey can pick it up without a separate lookup.
+If you need to inject participant IDs at link-generation time — so the panel's respondent identifier rides through the check and comes back on the return URL — call `POST /v3/initialize` and use the returned `url`. The `pass_params` field carries any participant identifier back on the return URL automatically.
 
 ```json
 {
@@ -77,8 +82,21 @@ Or, if you need to inject participant IDs or custom parameters at link-generatio
 }
 ```
 
-The `external_tracker` value is echoed on webhooks only, not on the return URL. Use it to tie webhook events back to your records.
+`external_tracker` is echoed on webhooks only, not on the return URL. Use it to tie webhook events back to your internal records. `pass_params` is what comes back on the return URL alongside `?vyt=TOKEN`.
 
-## Next: choose your survey leg
+## Where to go next
 
-Once you have picked your recruitment platform, choose how strongly to enforce the token inside the survey. See [Choosing your flow](/choosing-your-flow) for a side-by-side comparison of enforcement tiers, or go directly to the survey platform that matches your setup.
+<CardGroup cols={2}>
+  <Card title="Choosing your flow" icon="arrows-split-up-and-left" href="/choosing-your-flow">
+    Side-by-side comparison of enforcement tiers across both legs. Start here if you have not picked a survey platform yet.
+  </Card>
+  <Card title="Survey platforms overview" icon="clipboard-list" href="/survey/overview">
+    How to enforce the token inside the survey itself, from a true pre-content gate to a webhook-delete backstop.
+  </Card>
+  <Card title="The token" icon="ticket" href="/the-token">
+    What the token is, how long it lives, and why it cannot be earned twice.
+  </Card>
+  <Card title="What it costs" icon="circle-dollar-to-slot" href="/what-it-costs">
+    About two cents on a $3 to $7 complete. Here is the comparison against what a bad complete actually costs you.
+  </Card>
+</CardGroup>

@@ -1,67 +1,67 @@
 ---
-title: "Survey platforms: the enforcement leg"
-description: "How VerifyYou tokens are enforced inside survey tools, and which tier each platform reaches."
+title: "Survey platforms"
+description: "How the human check lives inside your survey tool \u2014 which enforcement tier each platform reaches and how to wire it up."
 ---
 
-The survey leg decides how early a bad respondent is caught, which depends entirely on what your survey tool can do. Some tools let you block entry before a single question loads. Others let you delete a bad submission the instant it arrives. A few let your own code call us before saving anything at all.
+The survey leg is where your screener's human check does its work. You have verified that the respondent is a real, unique, live human. Now the question is: how strongly does your survey tool enforce that verdict?
 
-Whichever tier your tool reaches, [uniqueness](/platform-tiers#why-uniqueness-is-the-real-lock) backstops everything: a respondent who already passed cannot get a second token for the same study, so the repeat-taker problem is stopped at the source regardless of when the platform check fires.
+Some tools let you block the door before a single question loads. Others delete a bad submission the instant it arrives. A few let your own code call us before anything is saved at all. The platform determines the tier; the tier determines the window.
+
+Underneath all of it: uniqueness backstops everything. A respondent who already passed cannot earn a second token for the same study. The repeat-taker problem is stopped at the source regardless of when your platform check fires. See [Platform tiers](/platform-tiers) for the full mechanics.
 
 ## The three enforcement tiers
 
-Think of these as when a bad respondent is caught, not whether they are caught.
+Think of these as *when* a bad respondent is caught, not *whether*.
 
 <CardGroup cols={3}>
   <Card title="True gate" icon="shield-halved">
-    The token is checked before any question loads. A respondent without a valid token never sees the survey. No bypass, no partial responses.
+    The credential is the gate. Only a respondent who passed gets a valid entry path — a personal link or a one-time password — so no one without a real token ever sees a question.
   </Card>
-  <Card title="Soft gate + webhook" icon="arrows-rotate">
-    The token is checked the instant the respondent submits. A bad submission is auto-deleted via the platform API before it ever lands in your dataset or CSV.
+  <Card title="Soft gate + webhook-delete" icon="arrows-rotate">
+    The token is checked the instant the respondent submits. A bad submission is deleted via the platform API before it lands in your dataset, your CSV, or your client deliverable.
   </Card>
   <Card title="Direct call" icon="code">
-    Your own code or a server-side integration calls us before saving a response. Effectively a true gate because nothing is persisted until the check passes.
+    Your code calls us before saving anything. Nothing is persisted until the check passes. Functionally a true gate.
   </Card>
 </CardGroup>
-
-See [Platform tiers](/platform-tiers) for a full explanation of the mechanics behind each tier and how to reason about edge cases.
 
 ## Platform comparison
 
 | Platform | Tier | Family | Best flow |
 |---|---|---|---|
-| Qualtrics | True gate | A, single-use credential | Single-use personal links, invitation-only distribution |
-| Alchemer | True gate | A, single-use credential | Login / password one-time passwords, one per respondent |
-| Typeform | Soft gate + webhook | B, wrapper + webhook-delete | Wrapper page holds the link; webhook auto-deletes bad submissions |
-| Jotform | Soft gate + webhook | B, wrapper + webhook-delete | Wrapper page holds the link; webhook auto-deletes bad submissions |
-| Tally | Soft gate + webhook | B, wrapper + webhook-delete | Wrapper page holds the link; webhook auto-deletes bad submissions |
-| SurveyMonkey | Soft gate + webhook | B, wrapper + webhook-delete | Wrapper page holds the link; webhook auto-deletes bad submissions |
-| Google Forms | Soft gate + webhook | B, wrapper + webhook-delete | Wrapper page holds the link; Apps Script webhook removes bad rows |
-| Formspark | Direct call | D, direct call | JS checks the token before submit fires; bad attempts never reach the server |
-| Your own app | Direct call | D, direct call | Call `GET /v3/survey/peek` server-side before persisting; call `POST /v3/survey/consume` on acceptance |
+| Qualtrics | True gate | A — single-use credential | Invitation-only distribution with single-use personal links |
+| Alchemer | True gate | A — single-use credential | Login/Password Action loaded with one-time passwords |
+| Typeform | Soft gate + webhook-delete | B — wrapper + webhook-delete | Wrapper page holds the link; webhook auto-deletes bad submissions |
+| Jotform | Soft gate + webhook-delete | B — wrapper + webhook-delete | Wrapper page holds the link; webhook auto-deletes bad submissions |
+| Tally | Soft gate + webhook-delete | B — wrapper + webhook-delete | Wrapper page holds the link; webhook must DELETE (not just flag) |
+| SurveyMonkey | Soft gate | B — platform branching | Advanced Branching on a custom var disqualifies on page 1 before capture |
+| Google Forms | Soft gate + webhook-delete | B — wrapper + webhook-delete | Wrapper page holds the link; Apps Script deleteResponse removes bad rows |
+| Formspark | Direct call | D — direct call | JS calls peek before submit fires; bad attempts never reach the server |
+| Your own form | Direct call | D — direct call | `GET /v3/survey/peek` server-side before saving; `POST /v3/survey/consume` on acceptance |
 
 <Note>
-MTurk sits on the recruitment side, not here. It enforces via a Qualification requirement, which is a true gate at the point of task acceptance. See [Recruitment: MTurk](/recruitment/mturk) for that flow.
+MTurk sits on the recruitment side, not here. It enforces via a custom Qualification requirement — a true gate at the point of task acceptance, before the respondent ever clicks your link. See [Recruitment: MTurk](/recruitment/mturk).
 </Note>
 
-## How the token travels through the survey leg
+## How the token moves through the survey leg
 
-The token (`vyt`) arrives on the return URL we send the respondent back to after they pass the liveness and uniqueness check. For example:
+After the respondent passes their liveness and uniqueness check, we return them to your study with a token on the URL:
 
 ```
 https://yourstudy.typeform.com/to/XYZ?pid=abc123&vyt=tok_live_...&vyc=1
 ```
 
-Your survey tool, wrapper page, or webhook then does one of the following depending on its tier:
+`pid` is carried back via `pass_params` — you set that when you initialize the session so your participant ID travels with the respondent on the return. `vyt` is the token. `vyc=1` is a UI hint only — confirm server-side via the token, never trust `vyc` alone. Then your tool enforces one of three ways:
 
-- **True gate tools** (Qualtrics, Alchemer): the token never needs to be read by the platform. The gate is the credential itself, a personal link or a one-time password. Because only a respondent who passed gets that credential, the platform enforces by controlling who has a valid entry path at all.
-- **Soft gate tools** (Typeform, Jotform, Tally, SurveyMonkey, Google Forms): the token rides in a hidden field or a prefilled question. On submission your webhook calls `GET /v3/survey/peek?vyt=TOKEN` and, if verified, calls `POST /v3/survey/consume?vyt=TOKEN` to burn it. If either check fails, delete the submission via the platform API.
-- **Direct-call tools** (Formspark, own app): your code reads the token before saving anything and calls peek then consume inline.
+**True gate tools (Qualtrics, Alchemer).** The token never needs to be read by the platform itself. The gate is the credential: a personal link, a one-time password. Only a respondent who passed gets one. The platform enforces by controlling who has a valid entry path at all.
 
-<Warning>
-Always authenticate peek and consume calls with your per-Flow publishable validation key (`pk_val_...`), sent as a Bearer token in the Authorization header. Do not make unauthenticated calls: an open endpoint would allow an attacker to probe whether any token string is valid (an enumeration oracle) and to burn tokens they do not own.
-</Warning>
+**Soft gate tools (Typeform, Jotform, Tally, Google Forms).** The token rides in a hidden field or a prefilled question. On submission your webhook calls `GET /v3/survey/peek` and, if verified, calls `POST /v3/survey/consume` to burn it. If either check fails, delete the submission via the platform API.
 
-### The two survey calls
+**SurveyMonkey.** Advanced Branching on a custom variable disqualifies a bad respondent on page 1, before they reach your questions proper. This is platform-native enforcement rather than a webhook-delete — bad respondents are terminated by the survey logic itself before capture.
+
+**Direct-call tools (Formspark, your own form).** Your code reads the token before saving anything and calls peek, then consume, inline.
+
+### The two survey endpoints
 
 For soft-gate and direct-call flows, use these two endpoints in sequence:
 
@@ -70,46 +70,82 @@ GET /v3/survey/peek?vyt=TOKEN
 Authorization: Bearer pk_val_FLOW_RAND
 ```
 
-Returns `{ "verified": true, "reason": "ok" }` (or `verified: false` with a reason). Idempotent. Does not burn the token. Safe to call at an entry gate and again from a webhook.
+Returns `{ "verified": true, "reason": "ok" }` or `verified: false` with a reason. Idempotent. Does not burn the token. Safe to call at an entry gate and again from a webhook.
 
 ```http
 POST /v3/survey/consume?vyt=TOKEN
 Authorization: Bearer pk_val_FLOW_RAND
 ```
 
-Returns `{ "consumed": true }`. Burns the token. Call this exactly once when you accept a real completion.
+Returns `{ "consumed": true }`. Burns the token. Call this exactly once, when you have a response you intend to keep.
 
 <Tip>
-Call peek at entry (if you control the landing page) and again at submission. Call consume only at submission, after the response is one you intend to keep. This way you get a true gate at entry and a webhook safety net at submit, with the token only burned once on a genuine completion.
+Call peek at entry (if you control the landing page) and again at submission. Call consume only at submission, after you have decided to accept the response. You get a true-gate check at entry and a webhook safety net at submit, with the token burned once on a genuine completion.
 </Tip>
+
+<Warning>
+Always authenticate with your per-Flow publishable validation key (`pk_val_...`) as a Bearer token. Do not make unauthenticated calls. An open endpoint would let an attacker probe whether any token string is valid — and consume tokens they did not earn.
+</Warning>
+
+The publishable validation key is validate-only — it carries no PII and is safe to use server-side. It is not your secret `sk_` key.
 
 ## Choosing your platform
 
-If your study requires the strongest possible enforcement and you have platform flexibility, prefer Qualtrics or Alchemer: the credential itself is the gate and there is no window where a bad respondent has seen any questions.
+If you have flexibility and the study requires maximum enforcement, Qualtrics or Alchemer is the answer. The credential is the gate. There is no window where a bad respondent has seen any questions.
 
-If you are already on Typeform, Jotform, Tally, SurveyMonkey, or Google Forms, the wrapper-plus-webhook pattern reaches soft gate, which catches every bad submission before it counts in your dataset. The honest difference from a true gate is a narrow window between when the form loads and when they submit, during which a determined bad actor has seen your questions. For most survey use cases this window is acceptable.
+Already on Typeform, Jotform, Tally, or Google Forms? The wrapper-plus-webhook-delete pattern gets you to soft gate. Every bad submission is deleted before it counts. The honest difference from a true gate is a narrow window between when the form loads and when the respondent submits — during which a determined bad actor has seen your questions. For most survey purposes this window is acceptable.
 
-If you are building your own form or using Formspark, a direct call gives you true-gate behavior with full control over the implementation.
+On SurveyMonkey? Advanced Branching terminates a bad respondent on page 1 via the survey's own logic, before they see your core questions.
+
+Building your own form or using Formspark? A direct call gives you true-gate behavior with full control over the implementation.
 
 <AccordionGroup>
-  <Accordion title="What if my platform is not in this list?">
-    The families apply broadly. If your tool supports single-use access links or one-time login credentials, treat it as Family A (true gate). If it supports webhooks on submission and a deletion API, treat it as Family B (soft gate). If you control the server-side code that saves responses, treat it as Family D (direct call). If none of those apply, reach out and we can advise.
+  <Accordion title="My platform is not in this list. Which family applies?">
+    The families are broad. If your tool supports single-use access links or one-time login credentials, treat it as Family A. If it supports webhooks on submission and a deletion API, treat it as Family B. If you control the server-side code that saves responses, treat it as Family D. If none of those apply, reach out and we can advise on the right pattern for your setup.
   </Accordion>
-  <Accordion title="Can I use a no-code share link instead?">
-    The no-code share link (`app.verifyyou.com/verification/ID`) plus a success Redirect URL in the dashboard is the simplest path if you only need to capture that a respondent passed and redirect them onward. It does not give you token-level enforcement inside the destination: you get a redirect with `?vyt=TOKEN&vyc=1` on the URL, but the survey tool itself does not check that token unless you wire it up. Use the share link for simple gating where the redirect itself is your gate (for example a Qualtrics personal link on the return path).
+  <Accordion title="Can I use the no-code share link?">
+    The no-code share link (`app.verifyyou.com/verification/ID`) plus a success Redirect URL in the dashboard is the simplest path when you only need to confirm a respondent passed and redirect them onward. It does not give you token-level enforcement inside the destination: your survey tool receives `vyt` on the return URL but does not check it unless you wire the endpoints. Use the share link when the redirect itself is your gate — for example, landing on a Qualtrics personal link after passing. Note: a failure redirect does not exist yet; on a fail the respondent returns with `vyc=0` and your return page routes the screen-out.
   </Accordion>
-  <Accordion title="What happens if a respondent's token expires before they submit?">
-    Tokens have a TTL of about 30 minutes from when we issue them. If the respondent takes longer than that on your survey and then submits, peek will return `verified: false` with a reason indicating expiry. Your webhook should treat this the same as any other failed check: delete the submission. In practice, a 30-minute window covers the large majority of survey completions. If your survey is unusually long, design your flow so respondents enter your survey immediately after passing the check rather than queuing the link for later.
+  <Accordion title="What if the token expires before the respondent submits?">
+    Tokens have a TTL of about 30 minutes from when we issue them. If a respondent takes longer than that and then submits, peek returns `verified: false` with an expiry reason. Treat this the same as any other failed check: delete the submission. A 30-minute window covers the large majority of completions. Design the flow so respondents enter the survey immediately after passing rather than queuing the link for later.
+  </Accordion>
+  <Accordion title="What does 'webhook must DELETE, not flag' mean for Tally?">
+    On some platforms it is tempting to mark a bad submission with a flag or a tag and filter it out in analysis. That leaves the response in your dataset. Delete it entirely via the platform API so it cannot make its way into a CSV export, an automated report, or a downstream integration. The HumanCheck is not a filter column — it is a gate.
   </Accordion>
 </AccordionGroup>
 
 ## Per-platform guides
 
-- [Qualtrics](/survey/qualtrics)
-- [Alchemer](/survey/alchemer)
-- [Typeform](/survey/typeform)
-- [Jotform](/survey/jotform)
-- [Tally](/survey/tally)
-- [SurveyMonkey](/survey/surveymonkey)
-- [Google Forms](/survey/google-forms)
-- [Formspark](/survey/formspark)
+<CardGroup cols={2}>
+  <Card title="Qualtrics" icon="q" href="/survey/qualtrics">
+    True gate via invitation-only distribution and single-use personal links. The strongest Qualtrics configuration, with a Web Service backstop for the known end-of-survey timing edge case.
+  </Card>
+  <Card title="Alchemer" icon="chart-bar" href="/survey/alchemer">
+    True gate via Login/Password Action loaded with one-time passwords. Check the guide for confirmed OTP burn timing behavior.
+  </Card>
+  <Card title="Typeform" icon="t" href="/survey/typeform">
+    Soft gate via wrapper page plus webhook-delete. Hidden field carries the token; webhook calls peek then consume; bad submissions are deleted before they count.
+  </Card>
+  <Card title="Jotform" icon="j" href="/survey/jotform">
+    Soft gate via wrapper page plus webhook-delete. Note: hidden-required fields do not block submission, so the delete call is non-optional.
+  </Card>
+  <Card title="Tally" icon="equals" href="/survey/tally">
+    Soft gate via wrapper page plus webhook-delete. The webhook must DELETE the response, not just flag it — the key distinction from a label-and-filter approach.
+  </Card>
+  <Card title="SurveyMonkey" icon="monkey" href="/survey/surveymonkey">
+    Soft gate with Advanced Branching on a custom variable that disqualifies on page 1, before a bad respondent reaches your core questions.
+  </Card>
+  <Card title="Google Forms" icon="google" href="/survey/google-forms">
+    Soft gate via wrapper page plus Apps Script. The deleteResponse call removes bad rows from the spreadsheet before any export or downstream step picks them up.
+  </Card>
+  <Card title="Formspark" icon="bolt" href="/survey/formspark">
+    Direct call. A JS submit handler calls peek before the native submit fires; bad attempts never reach the Formspark server.
+  </Card>
+</CardGroup>
+
+## Where to go next
+
+- [Platform tiers](/platform-tiers) — the full mechanics of how tiers interact with uniqueness and what each side ends up with
+- [The token](/the-token) — what the token is, how it is minted, and why it cannot be guessed or earned twice
+- [Build: validate endpoint](/build/validate-endpoint) — the peek and consume endpoints in full, including error codes and rate limits
+- [Choosing your flow](/choosing-your-flow) — if you have platform flexibility and want a recommendation based on your study design

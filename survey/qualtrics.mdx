@@ -1,28 +1,30 @@
 ---
 title: "Qualtrics"
-description: "Use VerifyYou with Qualtrics for the strongest survey leg: personal distribution links act as the gate, so a leaked link dies on the second click and a repeat taker never gets in."
+description: "The strongest survey leg we support: personal distribution links are the gate, so a leaked link dies on the second click and the same face cannot earn a second one."
 ---
 
-Qualtrics is the academic default and the strongest survey leg we support. The mechanism is worth understanding before you configure anything.
+Qualtrics is where this integration works hardest. The reason is structural, not cosmetic, and it is worth understanding before you touch a single setting.
 
-## How the gate works
+## How the gate actually works
 
-A standard Qualtrics survey has an anonymous link that anyone can open. We disable that link entirely, then generate a **single-use personal distribution link** for each respondent who passes the liveness and uniqueness check. That personal link is both the gate and the token: it is bound to one person, it expires after one use, and a leaked copy dies the moment the first person clicks it. There is no `?vyt=` parameter to strip, no hidden field to tamper with, and no way to earn a second link because the uniqueness check blocks the same face from passing again.
+A standard Qualtrics survey has an anonymous link anyone can open. We close that link entirely — Invitation Only mode, configured once, no exceptions. Then, for every respondent who passes liveness and uniqueness, we call the Qualtrics Distributions API and generate a **single-use personal distribution link** bound to that respondent and that survey. We redirect them straight to it.
 
-The result is a true gate: no unverified respondent ever sees your survey questions.
+That personal link is both the credential and the gate. It is tied to one verified face, it expires after one use, and a leaked copy dies the moment the first person clicks it. There is no anonymous entry point to probe, no shared URL to forward. And because the uniqueness check blocks a repeat attempt before the distribution step ever runs, the same face cannot earn a second link no matter how many times they try.
+
+No unverified respondent ever sees your survey questions. That is the promise this flow keeps.
 
 <CardGroup cols={2}>
-  <Card title="Strongest gate" icon="shield-check">
-    Personal links are single-use and expire. A leaked link cannot be reused. A repeat taker cannot earn a second one.
+  <Card title="True gate" icon="shield-check">
+    Personal links are single-use and expire. A leaked copy is worthless after the first click. A repeat taker cannot earn another one.
   </Card>
   <Card title="A few API roundtrips" icon="arrow-right-arrow-left">
-    We call the Qualtrics Distributions API (create contact, create distribution, fetch link) before redirecting the respondent. This adds a short pause at the end of verification.
+    We call the Qualtrics Distributions API — create contact, create distribution, fetch link — before redirecting the respondent. There is a short pause at the end of verification.
   </Card>
-  <Card title="Needs an API token" icon="key">
-    You connect a scoped Qualtrics API token in your VerifyYou dashboard. Without it the distribution step cannot run.
+  <Card title="Needs a scoped API token" icon="key">
+    You paste a Qualtrics API token into your VerifyYou dashboard. Contacts and distributions write permission on the target survey. Without it the distribution step cannot run.
   </Card>
-  <Card title="Defense in depth" icon="layer-group">
-    A Web Service element and a post-submit Workflow catch any edge case where a response slips through, and delete it automatically.
+  <Card title="Webhook-delete backstop" icon="layer-group">
+    A post-submit Workflow catches any edge case where a response slips through — a Qualtrics Web Service timing bug can cause survey-flow checks to fire late or be skipped — and deletes the response before it reaches your dataset.
   </Card>
 </CardGroup>
 
@@ -32,75 +34,75 @@ The result is a true gate: no unverified respondent ever sees your survey questi
 
 <Steps>
   <Step title="Turn on Invitation Only in Qualtrics">
-    In your Qualtrics survey go to **Survey** > **Survey Protection** and enable **Invitation Only**. This closes the anonymous survey URL. Anyone who navigates to it directly will be blocked; only respondents who arrive via a personal distribution link can enter.
+    In your Qualtrics survey go to **Survey** > **Survey Protection** and enable **Invitation Only**. This closes the anonymous survey URL. Anyone who navigates to it directly is blocked; only respondents arriving via a personal distribution link can enter.
 
-    Do this first. If you skip it, the gate does not exist regardless of what VerifyYou does.
+    Do this first. If you skip it, the gate does not exist regardless of what VerifyYou does downstream.
   </Step>
 
   <Step title="Connect your Qualtrics API token">
-    In the VerifyYou dashboard, open the Flow you are configuring and paste in a scoped Qualtrics API token. The token needs permission to read and write contacts and distributions on the target survey.
+    In the VerifyYou dashboard, open the Flow you are configuring and paste in a scoped Qualtrics API token. The token needs contacts and distributions write permission on the target survey.
 
-    We use this token to call the Distributions API on behalf of your account: we create a contact, create a distribution for that contact on your survey, and retrieve the resulting personal link. We then redirect the verified respondent directly to that link.
-
-    The respondent lands in your survey already verified. The personal link itself is the proof.
+    We use this token to call the Distributions API on your behalf: create a contact, create a distribution for that contact on your survey, retrieve the resulting personal link, and redirect the verified respondent to it. They land in your survey already verified, with no additional token or parameter to handle on your end. The personal link is the proof.
   </Step>
 
-  <Step title="Add a Web Service element as a second layer">
-    Inside your survey's **Survey Flow**, add a **Web Service** element before your first question block. Configure it to call the VerifyYou verification status endpoint for this Flow, using the per-Flow publishable validation key (`pk_val_...`) from your dashboard as the `Authorization: Bearer` header. Map the `verified` field from the response into an embedded data field, for example `vy_verified`.
+  <Step title="Add a post-submit Workflow as the backstop">
+    In **Workflows**, create a workflow that fires on every survey completion. Add a condition on the embedded data field `vy_verified`: if it is not equal to `true`, trigger a **Web Service** task that calls the VerifyYou response-deletion endpoint for this Flow, passing the Qualtrics response ID.
 
-    Then branch on that field: if `vy_verified` is `true`, continue to the survey. Treat any other value, including `false` and blank, as unverified and end the survey early with a screen-out message.
+    We bridge the Qualtrics REST API deletion using your connected API token — the native Qualtrics Web Service task cannot issue an HTTP `DELETE` on its own.
 
     <Warning>
-      Qualtrics has a known timing bug: the Web Service element sometimes fires at the **end** of the survey rather than at its position in the Survey Flow. Because of this, your branch logic must treat both `false` **and** an empty or missing `vy_verified` value as unverified. Also keep your VerifyYou endpoint response under about 2 seconds; longer responses can cause the element to time out silently.
-
-      This is why Step 4 exists. Do not rely on the Web Service element alone.
+      Qualtrics has a known timing bug: Survey Flow Web Service elements sometimes fire at the **end** of the survey rather than at their position in the flow. This is exactly why a Workflow-level backstop matters more than any in-survey check. If you add a Survey Flow Web Service element to double-check status at entry, treat both `false` **and** an empty or missing `vy_verified` value as unverified — a blank result means the element timed out or fired too late, not that the respondent passed. Never rely on a Survey Flow Web Service element alone.
     </Warning>
 
-    The verification check at this layer is idempotent: it reads the verification state without burning any token, so calling it here and again from a webhook is safe.
-  </Step>
-
-  <Step title="Add a post-submit Workflow as a backstop">
-    In **Workflows**, create a workflow that fires on every survey completion. Add a condition: `vy_verified` is not equal to `true`. When that condition is met, trigger a **Web Service** task that calls your VerifyYou Flow's response-deletion endpoint, passing the Qualtrics response ID.
-
-    We handle the Qualtrics REST API deletion on your behalf using your connected API token, because the Qualtrics Web Service task cannot issue an HTTP `DELETE` natively.
-
-    This is the backstop: any response that reached the submit stage without a valid `vy_verified` value is deleted before it lands in your dataset. You never see it in a CSV or in your response count.
+    This is the net below the net. Any response that reached submit without a confirmed `vy_verified` value is deleted before it lands in your dataset. You never see it in a CSV, never count it as a complete.
   </Step>
 </Steps>
 
 ---
 
-## Why three layers
+## Why two layers
 
-Each layer catches a different failure mode.
+Each one catches something the other misses.
 
 | Layer | What it catches |
 |---|---|
-| Invitation Only | Anyone without a personal link (anonymous access, link guessing) |
-| Web Service branch | A respondent whose link was invalid or whose verification status could not be confirmed before questions loaded |
-| Post-submit Workflow | Any edge case where the Web Service timing bug caused the branch to be skipped |
+| Invitation Only + personal distribution links | Anyone without a VerifyYou-issued link — anonymous access, guessed URLs, forwarded links that have already been used |
+| Post-submit Workflow DELETE | Any response that reached submit through an edge case: a timing bug, a Qualtrics platform anomaly, or a verification status that could not be confirmed at the Workflow condition check |
 
-Together they mean a bad respondent either never enters the survey, hits a screen-out early, or has their response deleted on submit. The honest catch is the timing window between submit and deletion: a response exists briefly in Qualtrics before the workflow fires. For most research purposes this is acceptable, and the response is gone before any analysis or export.
+The honest caveat: a response exists briefly in Qualtrics between submit and deletion — the Workflow fires after the fact, not at the door. For virtually all research purposes this is acceptable, and the response is gone before any analysis or export runs. The personal link layer stops the overwhelming majority of bad traffic before they ever touch your questions.
 
 ---
 
-## Token mechanics
+## What each side ends up with
 
-The personal distribution link is the token in this integration. On the VerifyYou side, when a respondent passes verification we mint a unique link bound to your specific Flow and to their verified identity. That link:
+| | Respondent | You |
+|---|---|---|
+| After verification | Personal distribution link, one use | Confirmed: real, unique, live human |
+| At survey entry | Arrives already verified, no extra step | No anonymous traffic; every opener is a confirmed face |
+| At completion | Survey submitted normally | Response in dataset with `vy_verified = true` |
+| If something slips | Hits the screen-out condition or response is deleted | Response never reaches your analysis |
 
-- Is valid for one use only and expires, consistent with the roughly 30-minute token window we apply across all integrations.
-- Cannot be earned a second time by the same face, because the uniqueness check blocks a repeat attempt before the distribution step ever runs.
-- Requires no `?vyt=` parameter on your end because the link itself carries the binding.
+---
 
-If you want explicit consume-call enforcement in addition to the personal link expiry (for example in a hybrid flow where you also call our API directly), see [the token overview](/the-token) for the full claim-ticket model.
+## How the distribution link works
+
+When a respondent passes verification, we call the Qualtrics Distributions API and mint a link bound to your specific Flow, their verified identity, and your survey. That link:
+
+- Is valid for one use only and expires — Qualtrics native single-use distribution links enforce this at the platform level.
+- Cannot be earned a second time by the same face — the uniqueness check blocks a repeat attempt before the Distributions API call ever runs.
+- Carries no `?vyt=` parameter on your end. The verification already happened; the personal link is the artifact that carries that proof into Qualtrics.
+
+Our systems receive a verdict — real and unique, or not — and a stable respondent identifier. Your survey only ever sees a yes or no. No face, no image, no PII crosses to you.
+
+If you are building a custom integration that also calls our API server-side — for example to confirm status independently — use [the token overview](/the-token) and the [validate endpoint](/build/validate-endpoint) for the full peek and consume model.
 
 ---
 
 ## Recruitment leg
 
-This page covers the survey leg only. Your recruitment leg (where respondents start) is independent: you paste your VerifyYou gated link wherever participants begin, whether that is a Prolific study, a Qualtrics panel email, a social post, or an MTurk HIT. The two legs never touch each other directly.
+This page covers the survey leg only. Your recruitment leg — where respondents start — is independent. Paste your VerifyYou gated link wherever participants begin: a Prolific study, a Qualtrics panel email, an MTurk HIT, a social post. The two legs never touch each other directly.
 
-See [Prolific](/recruitment/prolific) or [Choosing your flow](/choosing-your-flow) for the recruitment side.
+See [Prolific](/recruitment/prolific), [MTurk](/recruitment/mturk), or [Choosing your flow](/choosing-your-flow) for the recruitment side.
 
 ---
 
@@ -110,3 +112,44 @@ See [Prolific](/recruitment/prolific) or [Choosing your flow](/choosing-your-flo
 - A scoped API token with contacts and distributions write permission on the target survey.
 - **Invitation Only** turned on before you go live.
 - Your VerifyYou Flow configured with the Qualtrics integration and the API token connected.
+
+---
+
+## Questions researchers ask
+
+<AccordionGroup>
+  <Accordion title="Can a respondent forward their personal link to a friend?">
+    The link is single-use. The moment the first person clicks it, it is gone. A forwarded copy returns an error. And the face that earned the link cannot earn a second one — uniqueness blocks the repeat attempt before we even call Distributions.
+  </Accordion>
+  <Accordion title="What about the timing bug — does it affect my data?">
+    The timing bug affects Survey Flow Web Service elements, which can fire at the end of a survey rather than at their position. That is why the Workflow-level DELETE is the real backstop, not an in-survey check. The Workflow fires on completion, sees the missing or false `vy_verified` value, and deletes the response. Your dataset only ever contains responses where `vy_verified = true`.
+  </Accordion>
+  <Accordion title="Do I need to handle the vyt token or vyc parameter?">
+    No. In this integration the personal distribution link is the gate. Verification happens before your survey URL is ever involved. There is no `?vyt=` token for your survey to process.
+  </Accordion>
+  <Accordion title="Does VerifyYou store my respondents' faces?">
+    No. Your survey receives a verdict and a stable respondent identifier. We hold a face vector — a mathematical representation — used to enforce uniqueness. No image, no face, and no PII is shared with your survey or stored in a way you can access.
+  </Accordion>
+  <Accordion title="What happens when a respondent fails the check?">
+    They return to your recruitment platform's screen-out URL. Your Qualtrics survey never sees them. A failure redirect from VerifyYou takes care of routing; you configure that URL in your Flow settings.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Choosing your flow" icon="map" href="/choosing-your-flow">
+    Not sure Qualtrics is the right leg? Compare all survey platforms by gate strength, setup effort, and fit.
+  </Card>
+  <Card title="The token" icon="ticket" href="/the-token">
+    How the claim-ticket model works end to end — minting, peeking, consuming, and expiry.
+  </Card>
+  <Card title="Prolific" icon="users" href="/recruitment/prolific">
+    The recruitment leg that pairs most often with Qualtrics in academic and panel research.
+  </Card>
+  <Card title="What it costs" icon="circle-dollar-to-slot" href="/what-it-costs">
+    About two cents on a three-to-seven-dollar complete. Compare that to the twelve to fifteen dollars a single bad response costs you.
+  </Card>
+</CardGroup>

@@ -1,51 +1,55 @@
 ---
-title: "VerifyYou for surveys and gated actions"
-description: "Put a deepfake-resistant, uniqueness-enforced human check in front of any survey, checkout, or signup, on platforms we have never touched."
+title: "Drop a HumanCheck in front of anything"
+description: "Put a real, unique, live human check in front of any survey, checkout, or signup, on a platform VerifyYou never integrated with."
 ---
 
-VerifyYou puts a deepfake-resistant "are you a real, unique human?" check in front of any action, on any platform, without the platform needing to know we exist. You deploy it; your survey tool, checkout page, or signup form just sees a respondent who either passed or did not.
+The moment something is worth gaming, a survey complete, a signup, a payout, a gated offer, people find a way: bots, fake accounts, one person quietly running fifteen identities, bulk buyers. Trust breaks at that scale. VerifyYou is the layer between nothing and KYC, and this is how you put it to work.
 
-The output of every check is a single primitive: a **single-use token bound to one unique face**. Think of it like a coat-check stub. We mint one when a respondent passes liveness and uniqueness, and we record it in our own database as "real, unused, for this study, valid for about 30 minutes." The respondent carries the stub back to your survey. When your survey (or a webhook, or a wrapper page) hands the stub back to us, we look it up: is it real? unused? for this study? not expired? Only "yes to all" counts. It cannot be faked because we minted it, and the uniqueness check means the same person cannot earn a second one, so sharing or farming does not work either.
+You drop a **HumanCheck** in front of the action you care about, on the platform you already use. Your survey tool, checkout page, or signup form never has to know we exist. You deploy the check; the platform just sees a respondent who either passed or did not. It is a real, unique, live human, without the cost, the PII, or the friction of an ID check. It is not KYC, and that is the point.
 
 <Note>
-  These docs are written for academic and market researchers running paid studies, but the same primitive works for any gated action, including checkouts and signups. If that is your use case, read on.
+  These docs lead with academic and market researchers running paid studies, because that is where the doubt bites hardest and the math is cleanest. The same primitive works for any gated action, checkout or signup included. If that is you, read straight on.
 </Note>
+
+## One primitive: a claim ticket for one unique face
+
+Every check produces the same thing: a **single-use token bound to one unique face**. Think of it as a claim ticket, a coat-check stub. We mint one the moment a respondent clears **liveness** (a live person present now, not a photo, replay, mask, or generated face) and **uniqueness** (are they new, or has this face been seen before?). We record it on our side as real, unused, for this flow, and give it a short expiry window.
+
+The respondent carries the stub back to your survey. When your survey, a webhook, or a wrapper page hands it back to us, we look it up: real? unused? for this flow? not expired? Only yes to all counts. It cannot be forged, because we are the only one who mints it. It cannot be earned twice, because uniqueness means the same face gets exactly one ticket, so sharing the link or farming completes goes nowhere.
+
+That last part is the lock. A code that only proves a live human clicked can be shared or farmed. A ticket bound to one unique face cannot. Liveness stops bots; uniqueness stops the repeat taker, the panel member completing on two devices, the friend the link got passed to. Those are the problems that actually cost you.
 
 ## The two legs
 
-Every integration has the same shape, with two ends you pick independently.
+Every integration has the same shape, with two ends you choose independently. They never touch each other, only our gated link in the middle, so there is no matrix of platform pairings to learn.
 
 <Steps>
   <Step title="Recruitment leg">
-    Where respondents start. You paste our gated link here, whether that is a Prolific study URL, a Qualtrics mailing list, a social post, or anywhere else. This leg decides what a rejection costs the respondent.
+    Where respondents start. You paste our gated link here, whether that is a Prolific study URL, an MTurk HIT, a Qualtrics mailing list, a panel provider, or a plain social post. This leg decides what a rejection costs the respondent.
   </Step>
-  <Step title="VerifyYou check">
-    A ~20-second liveness selfie. We run liveness detection and a uniqueness check. On pass we redirect the respondent back to your survey with the token in the URL. On fail we tell them they did not pass.
+  <Step title="The HumanCheck">
+    A short hosted flow in the browser. We run liveness, then uniqueness. On a pass, we return the respondent to your survey with the token on the URL. On a fail, they come back marked not verified, and your return page routes the screen-out.
   </Step>
   <Step title="Survey leg">
-    Where the survey or action lives. This leg decides how strongly the token is enforced, from a true entry gate (no bad respondent ever sees a question) to an auto-reject webhook (a bad response is deleted the instant they submit). Either way, a bad token never becomes a paid, counted response.
+    Where the survey or action lives. This leg decides how hard the token is enforced, from a true entry gate where no bad respondent ever sees a question, to an auto-reject webhook that deletes a bad response the instant it is submitted. Either way, a bad token never becomes a paid, counted complete.
   </Step>
 </Steps>
 
-The two legs never touch each other. They only touch our gated link in the middle. That means there is no matrix of platform pairings to learn: you pick your recruitment source and your survey tool independently, and the same check sits between them.
-
-## Why uniqueness is the real lock
-
-A code that only proves "a live human clicked" can be shared or farmed. A token bound to one unique face cannot. Even if a respondent passes the liveness check, the uniqueness check means the same person cannot earn a second token for the same study. That is the problem researchers actually care about: the repeat taker, the panel member who completes on two devices, the farmer who sends the link to a friend. Liveness stops bots; uniqueness stops duplicates.
+You pick your recruitment source and your survey tool separately, and the same check sits between them. The lightest check that still protects what is at stake, so your real respondents barely notice.
 
 ## Where to go next
 
 <CardGroup cols={2}>
+  <Card title="Why verified humans" icon="shield-check" href="/why-verified-humans">
+    The case for the trust layer between nothing and KYC, and where a HumanCheck stacks with what you already run.
+  </Card>
   <Card title="How it works" icon="circle-nodes" href="/how-it-works">
-    The full technical flow: the API call, the token, the return URL, and how enforcement tiers work.
+    The full technical flow: the API call, the token, the return URL, and how the enforcement tiers differ.
   </Card>
-  <Card title="Choose your flow" icon="code-branch" href="/choosing-your-flow">
-    Pick the right enforcement tier for your study design and platform.
-  </Card>
-  <Card title="Recruitment sources" icon="users" href="/recruitment/overview">
-    Prolific, MTurk, Qualtrics panels, and direct links: where to paste the gated URL and what rejection means for each.
+  <Card title="The screener" icon="filter" href="/the-screener">
+    For researchers: a HumanCheck as a screener criterion, the modern replacement for the trap question.
   </Card>
   <Card title="Survey platforms" icon="list-check" href="/survey/overview">
-    Qualtrics, Typeform, Alchemer, Tally, Google Forms, and more: how each platform enforces the token.
+    Qualtrics, Alchemer, Typeform, Tally, Google Forms, and more, and exactly how each one enforces the token.
   </Card>
 </CardGroup>

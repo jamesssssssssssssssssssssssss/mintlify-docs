@@ -18,7 +18,15 @@
         ]
       },
       {
-        "group": "Understand it",
+        "group": "Why it matters",
+        "pages": [
+          "why-verified-humans",
+          "the-screener",
+          "what-it-costs"
+        ]
+      },
+      {
+        "group": "How it works",
         "pages": [
           "how-it-works",
           "the-token",

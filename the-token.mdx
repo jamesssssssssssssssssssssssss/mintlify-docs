@@ -1,113 +1,131 @@
 ---
-title: "The Token, Explained"
-description: "How VerifyYou's single-use claim ticket works, why it cannot be faked, and when it gets checked."
+title: "The token"
+description: "The single-use claim ticket that rides between VerifyYou and your survey, why it cannot be faked or earned twice, and the honest catch about when it gets checked."
 ---
 
+One object travels between VerifyYou and your survey, form, or app. Everything else in the integration is about where that object rides and when you look it up. That object is the token. This page is the whole mechanism in plain English.
 
-The token is the object that travels between VerifyYou and your survey, form, or app. Everything else in the integration is just about where the token rides and when you check it. This page explains the whole mechanism in plain English.
+A HumanCheck ends in a verdict: real, unique, live human, or not. The token is how that verdict crosses the gap to your survey without your survey ever touching the face behind it. You get a yes or no. Nothing else comes with it.
 
-## The claim-ticket model
+## The claim ticket
 
-Think of a coat-check stub, or a password-reset link. When you hand your coat to the attendant, they give you a numbered ticket. The ticket is meaningless to anyone who picks it up off the floor, because it only works if the coat-check has a matching entry in their own records. When you return and hand it back, they look it up: is this number in our book? Is the coat still here? Is it yours? Only "yes to all" returns a coat.
+Think of a coat-check stub. You hand over your coat, the attendant gives you a numbered ticket. The ticket is worthless to anyone who finds it on the floor, because it only means something if the coat-check has a matching entry in their own book. When you come back and hand it over, they look it up: is this number in our records, is the coat still here, is it yours. Only yes to all of that returns a coat.
 
-VerifyYou works the same way. The ticket is a random opaque string we call a **verification token** (`vyt`). We mint it; we hold the record; and only we can answer whether a given ticket is real.
+The token works the same way. It is a random opaque string we call the verification token (`vyt`). We mint it, we hold the record, and only we can say whether a given ticket is real. You never have to trust the string itself. You hand it back and we tell you.
 
-## Step by step
+## The whole walk, start to finish
 
 <Steps>
-  <Step title="The respondent completes the check">
-    They do the ~20-second liveness selfie. We run liveness and our uniqueness check in parallel. If both pass, we proceed to step two. If either fails, there is no ticket.
+  <Step title="The respondent passes the check">
+    They do the roughly twenty-second liveness selfie. We run liveness and uniqueness in parallel: a live person present now, then are they new. Both pass, we go to step two. Either fails, there is no ticket. A failed check never produces one.
   </Step>
-  <Step title="We mint the ticket and record it">
-    We generate a random string, hash it, and write a record in our database that reads roughly: "real, unused, for study X, expires in about 30 minutes." The respondent never sees this record directly. They only receive the string itself.
+  <Step title="We mint the ticket and write it down">
+    We generate a random string, hash it, and record a line in our own database that reads roughly: real, unused, bound to this Flow, expires in about thirty minutes. The respondent never sees that line. They receive only the string.
   </Step>
   <Step title="The ticket rides along">
-    We return the respondent to your configured destination. The token travels as a query parameter: `?vyt=TOKEN`. Your `pass_params` (for example `PROLIFIC_PID` or `RID`) travel on the same return URL so you know whose response this is. A `vyc` parameter also arrives: `1` for verified, `0` for not.
+    We return the respondent to your configured destination and the token travels as a query parameter: `?vyt=TOKEN`. Your `pass_params` (for example `PROLIFIC_PID` or `RID`) ride the same return URL, so you know whose response this is. A `vyc` parameter arrives too: `1` for verified, `0` for not — a UI hint only, never the enforcement itself. Confirm server-side.
 
-    Depending on how you have configured the flow, the token might land directly in a survey URL, be captured into a hidden field, or be used as an entry credential on a wrapper page you control.
+    Depending on how you configured the flow, the token lands directly in a survey URL, drops into a hidden field, or serves as the entry credential on a wrapper page you host.
   </Step>
-  <Step title="The survey, webhook, or wrapper hands the ticket back to us">
-    At the point of enforcement, your tool sends the token to our API. The two calls are:
+  <Step title="Your tool hands the ticket back to us">
+    At the point of enforcement, your tool sends the token to our API. There are two calls, and the difference between them is the whole trick:
 
-    - `GET /v3/survey/peek?vyt=TOKEN` — looks up the ticket without punching it. Safe to call more than once. Returns `{ verified, reason }`.
-    - `POST /v3/survey/consume?vyt=TOKEN` — stamps the ticket used. Burns it permanently. Call this exactly once, when a genuine completion is accepted.
+    - `GET /v3/survey/peek?vyt=TOKEN` looks up the ticket without punching it. Idempotent, safe to call more than once. Returns `{ verified, reason }`.
+    - `POST /v3/survey/consume?vyt=TOKEN` stamps the ticket used and burns it for good. Call it exactly once, when a genuine completion is accepted.
 
-    Both calls require an `Authorization: Bearer pk_val_FLOW_RAND` header, a per-Flow publishable validation key.
+    Both carry an `Authorization: Bearer pk_val_FLOW_RAND` header — a per-Flow publishable validation key.
 
     <Note>
-      The peek/consume split exists so you can check early and check often without accidentally burning the ticket. A webhook that fires on partial saves, for example, can peek freely. Only the final accepted-completion step should consume.
+      The peek and consume split exists so you can check early and check often without accidentally spending the ticket. A webhook that fires on partial saves can peek all it likes. Only the final accepted completion should consume.
     </Note>
   </Step>
-  <Step title="We look it up in our own records">
-    We ask four questions internally:
+  <Step title="We look it up in our own book">
+    Four questions, all internal, all ours to answer:
 
     | Question | What we check |
     |---|---|
     | Real? | Did we mint this exact string? |
     | Unused? | Has it been consumed already? |
     | For this study? | Is it bound to this Flow? |
-    | Unexpired? | Is it still within the ~30-minute window? |
+    | Still good? | Is it inside the roughly thirty-minute window? |
 
-    Only "yes to all four" returns `verified: true`. Any single "no" fails the check.
+    Yes to all four returns `verified: true`. A single no fails the check.
   </Step>
 </Steps>
 
-## Why it cannot be faked
+## Why it cannot be faked, and cannot be earned twice
 
-The token is a random opaque string that only matches if we minted it. There is no algorithm to reverse-engineer or predict it. The only way to hold a valid token is to have passed our liveness and uniqueness check and received one from us.
+Two locks, and they stack — they do not substitute.
 
-The uniqueness check is the second lock. A code that just says "a live human clicked" can be shared or farmed across many accounts. A token bound to one unique face cannot scale that way: the same person cannot get a second token. So even if someone tries to participate twice, they are stopped before a second token is ever issued. The repeat-taker, which is the problem researchers actually care about, cannot earn a second one.
+The first lock is the string. It is random and opaque, and it only matches if we minted it. There is nothing to reverse-engineer and nothing to predict. The only way to hold a valid token is to have passed liveness and uniqueness and been handed one.
+
+The second lock is uniqueness, and it is the one researchers actually care about. A code that just says a live human clicked can be shared and farmed across fifteen accounts. A token bound to one unique face cannot scale that way. The same person cannot earn a second one, because the second attempt is stopped at the liveness step before a token is ever issued. The repeat-taker, the duplicate quietly running the survey again, never reaches the point where a ticket exists to be handed out.
 
 <CardGroup cols={2}>
   <Card title="Cannot guess" icon="dice">
-    Tokens are random. Guessing one that matches our records is not feasible, and our API is rate-limited to prevent enumeration attempts.
+    Tokens are random. Guessing one that matches our records is not feasible, and the API is rate-limited to shut down enumeration attempts.
   </Card>
   <Card title="Cannot reuse" icon="ban">
-    A consumed token is permanently burned. Replaying the same token string returns `verified: false` on the second call.
+    A consumed token is burned permanently. Replay the same string and the second call returns `verified: false`.
   </Card>
   <Card title="Cannot repeat" icon="user-slash">
-    Uniqueness means the same face cannot earn a second token. A repeat-taker is stopped at the liveness step before they can get another one.
+    Uniqueness means the same face cannot earn a second token. The repeat-taker is stopped at liveness, before another one exists.
   </Card>
   <Card title="Cannot forge" icon="shield-halved">
-    Tokens are stored hashed at rest and compared in constant time. There is no plaintext lookup shortcut to exploit.
+    Tokens are stored hashed at rest and compared in constant time. There is no plaintext lookup to exploit.
   </Card>
 </CardGroup>
 
 <Warning>
-  Never operate without a validation key. Calling the API with no authentication enables anyone who finds a token string to burn it (denial-of-service against legitimate respondents) and opens an enumeration oracle. The `pk_val_` key is publishable and carries no PII, so it is safe to hold in a survey tool's server-side credential store.
+  Never operate without a validation key. Calling the API with no authentication lets anyone who finds a token string burn it — a denial of service against your real respondents — and opens an enumeration oracle. The `pk_val_` key is publishable and carries no PII, which is exactly why it is safe to hold in a survey tool's server-side credential store. No key at all is not the safe option. The publishable key is.
 </Warning>
 
 ## The honest catch: when we get to check
 
-The token mechanism is solid. The timing depends on your tool.
+The token mechanism is solid. The one thing that varies is timing, and timing depends on your tool, not on us.
 
 <AccordionGroup>
-  <Accordion title="Best case: before the form loads (true gate)">
-    The token is checked before a single question is shown. A bad or missing token sees nothing and completes nothing. This is achievable with Qualtrics single-use personal links, Alchemer login/password credentials, MTurk qualifications, or any wrapper page you host yourself that calls `peek` before rendering.
+  <Accordion title="Best case: before the form loads (a true gate)">
+    The token is checked before a single question is shown. A bad or missing token sees nothing and completes nothing. You get this with Qualtrics single-use personal links, Alchemer login-and-password credentials, MTurk qualifications, or any wrapper page you host that calls `peek` before it renders.
   </Accordion>
-  <Accordion title="Common case: the instant they submit (soft gate + webhook)">
-    The respondent fills the form, submits, and the platform fires a webhook to your endpoint. A bad token triggers an automatic deletion of that response via the platform API before it reaches your export or CSV. The respondent had access to the questions, but their response never becomes a paid, counted entry. This covers tools like Typeform, Jotform, Tally, SurveyMonkey, and Google Forms.
+  <Accordion title="Common case: the instant they submit (soft gate plus webhook)">
+    The respondent fills the form, submits, and the platform fires a webhook to your endpoint. A bad token triggers an automatic deletion of that response through the platform API before it lands in your export. They saw the questions, but their submission never becomes a paid, counted complete. This is how Typeform, Jotform, Tally, SurveyMonkey, and Google Forms work.
   </Accordion>
   <Accordion title="Your own code: effectively a true gate">
-    If you control the destination, you call `peek` before saving anything. This is the cleanest path and equivalent to a true gate regardless of platform.
+    If you control the destination, you call `peek` before you save anything. Cleanest path there is, and equivalent to a true gate whatever platform sits behind it.
   </Accordion>
 </AccordionGroup>
 
-Either way, a bad ticket never becomes a paid, counted response. The question is only whether the respondent saw the questions before being rejected.
+Either way, a bad ticket never becomes a paid, counted response. The only question left is whether the respondent laid eyes on the questions before being turned away.
 
 <Tip>
-  If your methodology requires that respondents never see a single question without a valid token, choose a tool that supports a true gate. See [Choosing your flow](/choosing-your-flow) for a side-by-side comparison.
+  If your methodology requires that respondents never see a single question without a valid token, pick a tool that supports a true gate. [Choosing your flow](/choosing-your-flow) lays the options out side by side.
 </Tip>
 
 ## Quick reference
 
 | Term | What it means |
 |---|---|
-| `vyt` | The token query parameter returned on the success redirect |
-| `vyc` | `1` = verified, `0` = not, also on the return URL |
+| `vyt` | The token, returned as a query parameter on the return URL |
+| `vyc` | `1` verified, `0` not — a UI hint on the return URL; confirm server-side |
 | `peek` | Read-only check. Idempotent. Does not burn the token. |
 | `consume` | Write check. Burns the token. Call once per genuine completion. |
-| `pk_val_` | Per-Flow publishable validation key. Required for both calls. |
-| TTL | About 30 minutes from issuance. |
+| `pk_val_` | Per-Flow publishable validation key. Required on both calls. |
+| TTL | About thirty minutes from issuance. |
 
-For the full API reference, see [POST /v3/initialize](https://docs.verifyyou.com) and [GET /v3/survey/peek](https://docs.verifyyou.com).
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="How it works" icon="diagram-project" href="/how-it-works">
+    The full picture: hosted check, the return moment, verdict only.
+  </Card>
+  <Card title="Choosing your flow" icon="list-check" href="/choosing-your-flow">
+    True gate or soft gate, tool by tool, side by side.
+  </Card>
+  <Card title="The validate endpoint" icon="code" href="/build/validate-endpoint">
+    `peek` and `consume` in full, with auth and TTL details.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/build/architecture">
+    Where the token sits in the end-to-end integration.
+  </Card>
+</CardGroup>

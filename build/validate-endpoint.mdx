@@ -1,19 +1,19 @@
 ---
-title: "The validate endpoint: peek vs consume"
-description: "How the two-call validate design works, why it exists, and how to use it correctly in wrapper-plus-webhook flows."
+title: "The validate endpoint: peek and consume"
+description: "How the two-call peek-then-consume design works, why it exists, and how to wire it correctly into a wrapper-plus-webhook flow."
 ---
 
-Most flows need to validate a token more than once. A pre-render wrapper checks it before showing any questions; a post-submit webhook checks it again before accepting a response. If a single call burned the token on read, the second check would fail for a perfectly legitimate respondent. That is why the endpoint is split into two separate calls with different semantics.
+Most flows need to validate a token in two places. A pre-render wrapper checks it before the form ever loads. A post-submit webhook checks it again before the response is accepted. One call that burns the token on read would fail the second check for a perfectly legitimate respondent. That is why the endpoint is split: peek is idempotent, consume burns.
 
 <Warning>
-Confirm this two-call design with your engineering team before you wire up any connectors. Every wrapper-plus-webhook flow in the VerifyYou integration pattern depends on peek being idempotent and consume being the single burn point. Building those two halves against the same endpoint would silently break legitimate respondents.
+Confirm this two-call design with your engineering team before you wire any connectors. Every wrapper-plus-webhook integration in the VerifyYou pattern depends on peek being side-effect-free and consume being the single burn point. Building both halves against the same endpoint would silently reject legitimate respondents.
 </Warning>
 
 ## The two calls
 
 ### GET /v3/survey/peek
 
-Returns the current state of a token without changing it. Call this as many times as you need.
+Read the current state of a token. Nothing changes. Call it as many times as you need.
 
 ```http
 GET /v3/survey/peek?vyt=TOKEN
@@ -25,15 +25,13 @@ Response:
 ```json
 {
   "verified": true,
-  "reason": "ok",
-  "flow_id": "flow_abc123",
-  "consumed": false
+  "reason": "ok"
 }
 ```
 
-`verified` is `true` only if the token represents a completed, passing liveness and uniqueness check. `reason` is always returned: it is `"ok"` when the token is valid, and a short machine-readable string explaining the problem when it is not (for example `"expired"`, `"not_verified"`, `"wrong_flow"`). `consumed` tells you whether the token has already been burned, so you can distinguish a token that was never valid from one that has already been accepted and locked.
+`verified` is `true` only when the token represents a completed, passing liveness and uniqueness check. `reason` is always present: `"ok"` when the token is valid and unused, a short machine-readable string when it is not — for example `"expired"`, `"not_verified"`, `"wrong_flow"`, or `"already_consumed"`.
 
-This call is safe to make from a pre-render wrapper page, a middleware function, or any entry gate before your form loads. Nothing changes in our database; the same call from a webhook five minutes later returns the same result.
+This call is safe from a pre-render wrapper, a middleware function, or any entry gate before your form loads. Nothing changes in our database. The same peek call from a webhook five minutes later returns the same result — unless consume fired in between, in which case `reason` becomes `"already_consumed"`.
 
 ### POST /v3/survey/consume
 
@@ -56,18 +54,18 @@ If the token is already consumed, expired, or does not belong to the Flow the ke
 
 ## Authentication: the per-Flow publishable key
 
-Both calls use a `pk_val_` key, not your secret `sk_` key. This is a per-Flow publishable validation key. It can only check tokens for one specific Flow; it cannot read PII, create sessions, or take any other action. That makes it safe to hold in a survey platform's server-side credential store or in an environment variable on a lightweight wrapper function.
+Both calls use a `pk_val_` key, not your secret `sk_` key. This is a per-Flow publishable validation key. It can only check tokens for one specific Flow. It cannot read PII, create sessions, or take any other action. That makes it safe to hold in a survey platform's server-side credential store or in an environment variable on a lightweight wrapper function.
 
 <Warning>
-"No key at all" is not a safe fallback. An unauthenticated consume endpoint enables a token-burn denial-of-service attack (anyone who can guess or observe a token URL can burn it before the real respondent submits) and creates an enumeration oracle. Always require the `pk_val_` key.
+"No key at all" is not a safe fallback. An unauthenticated consume endpoint enables a token-burn denial-of-service attack — anyone who can observe a token URL can burn it before the real respondent submits — and creates an enumeration oracle. Always require the `pk_val_` key.
 </Warning>
 
-You generate a `pk_val_` key in the VerifyYou dashboard, scoped to the Flow you are building against. Rotate it the same way you would any API credential: invalidate the old one in the dashboard, update your environment variable, redeploy.
+Generate a `pk_val_` key in the VerifyYou dashboard, scoped to the Flow you are building against. Rotate it the same way you would any API credential: invalidate the old one in the dashboard, update your environment variable, redeploy.
 
 ## Token security properties
 
-- **Flow-bound.** A token minted for Flow A returns `{ "verified": false, "reason": "wrong_flow" }` if you peek it against Flow B's key. You cannot accidentally accept a token from a different study.
-- **Time-limited.** Tokens expire after approximately 30 minutes. A respondent who completes the liveness check and then sits idle before submitting will get an expired token. Your failure path should tell them to re-verify.
+- **Flow-bound.** A token minted for Flow A returns `{ "verified": false, "reason": "wrong_flow" }` when peeked against Flow B's key. You cannot accidentally accept a token from a different study.
+- **Time-limited.** Tokens expire after approximately 30 minutes. A respondent who completes the liveness check and then sits idle before submitting will arrive with an expired token. Your failure path should tell them to re-verify.
 - **Hashed at rest.** We store only the hash, not the raw token string. A database read from our side cannot produce a working token.
 - **Rate-limited.** Repeated peek or consume calls for non-existent tokens are rate-limited to prevent brute-force enumeration.
 - **Constant-time comparison.** Token lookups use constant-time comparison to prevent timing attacks.
@@ -86,26 +84,26 @@ WHERE token_hash = $1
 RETURNING verified, external_id;
 ```
 
-If this UPDATE returns a row, the token was valid and is now burned. If it returns nothing, either the token did not exist, was already consumed, or has expired. This is exactly the logic our `/v3/survey/consume` endpoint runs on our side. Running it in your own store as well gives you an offline audit trail and eliminates the double-accept race condition that would occur if two webhook deliveries fired simultaneously for the same response.
+If this UPDATE returns a row, the token was valid and is now burned. If it returns nothing, the token did not exist, was already consumed, or has expired. This is exactly the logic our `/v3/survey/consume` endpoint runs on our side. Running it in your own store as well gives you an offline audit trail and eliminates the double-accept race condition that would occur if two webhook deliveries fired simultaneously for the same response.
 
 ## Putting it together: a wrapper-plus-webhook flow
 
 <Steps>
   <Step title="Respondent arrives at your wrapper page">
-    Your server calls `GET /v3/survey/peek?vyt=TOKEN`. If `verified` is `false` or `consumed` is `true`, render an error page. Do not load the form. Token is not burned.
+    Your server calls `GET /v3/survey/peek?vyt=TOKEN`. If `verified` is `false` or `reason` is anything other than `"ok"`, render an error page and stop. Do not load the form. The token is not burned.
   </Step>
   <Step title="Respondent fills out the form and submits">
-    Your survey platform (or your own application) receives the submission. The `vyt` token travelled through the form as a hidden field or a URL parameter.
+    Your survey platform receives the submission. The `vyt` token traveled through the form as a hidden field or a URL parameter.
   </Step>
   <Step title="Webhook fires">
-    Your webhook handler calls `GET /v3/survey/peek?vyt=TOKEN` again to revalidate. This still returns the same result as step 1 because peek does not burn.
+    Your webhook handler calls `GET /v3/survey/peek?vyt=TOKEN` again to revalidate. Because peek does not burn, this returns the same result as step one — provided consume has not fired yet.
   </Step>
   <Step title="Accept or reject">
-    If peek returns `{ "verified": true, "consumed": false }`, call `POST /v3/survey/consume?vyt=TOKEN`. If consume returns `{ "consumed": true }`, accept and record the response. Otherwise delete or flag it.
+    If peek returns `{ "verified": true, "reason": "ok" }`, call `POST /v3/survey/consume?vyt=TOKEN`. If consume returns `{ "consumed": true }`, accept and record the response. Otherwise delete or flag it.
   </Step>
 </Steps>
 
-The two peek calls serve different purposes: the first stops a respondent from even loading the form with a bad token; the second is a second line of defense at the moment of truth. Only one consume call ever fires per legitimate respondent, at the point of acceptance.
+The two peek calls serve different purposes. The first stops a respondent from loading the form with a bad token at all. The second is the line of defense at the moment of truth. Only one consume ever fires per legitimate respondent, at the point of acceptance.
 
 ## Error reference
 
@@ -118,7 +116,22 @@ The two peek calls serve different purposes: the first stops a respondent from e
 | `not_verified` | Liveness or uniqueness check did not pass | Reject and screen out |
 
 <Note>
-The `consumed` field on peek and the `consumed` field on consume mean slightly different things. On peek, `consumed: true` means someone has already called consume successfully, but `verified` may still be `true` (it records what the face check returned, not whether the token is still usable). On consume, `consumed: true` means this specific call just burned it. Always check the consume response, not a subsequent peek, to confirm a successful burn.
+The `reason` field on peek tells you the full story: `"ok"` means valid and unused, `"already_consumed"` means a prior consume call succeeded. Always check `reason`, not just `verified`, before deciding to call consume.
 </Note>
 
-For the full flow shapes that use these calls, see [/survey/qualtrics](/survey/qualtrics), [/survey/typeform](/survey/typeform), and [/build/wrapper-page](/build/architecture).
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Architecture overview" icon="sitemap" href="/build/architecture">
+    How the wrapper page, webhook, and token fit into a complete flow.
+  </Card>
+  <Card title="What we build" icon="hammer" href="/build/what-we-build">
+    The full list of platform connectors that implement this pattern.
+  </Card>
+  <Card title="Qualtrics integration" icon="chart-bar" href="/survey/qualtrics">
+    The strongest gate: single-use distribution links plus a Web Service backstop.
+  </Card>
+  <Card title="Typeform integration" icon="file-alt" href="/survey/typeform">
+    Wrapper pre-render plus a delete webhook — a clean soft gate.
+  </Card>
+</CardGroup>

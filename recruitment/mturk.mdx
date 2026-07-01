@@ -1,57 +1,56 @@
 ---
 title: "Amazon Mechanical Turk"
-description: "Gate your MTurk HITs so only verified, unique humans can work them, using a custom Qualification as a true entry barrier."
+description: "Gate your MTurk HITs with a custom Qualification \u2014 unverified workers never see your main task, and a returned HIT costs you nothing."
 ---
 
-MTurk is the one platform where the strongest enforcement option is also the cheapest. A custom Qualification acts as a true gate: non-verified workers never see your main HIT, and a returned HIT costs you nothing in fees. The verification check happens once, the Qualification persists on the worker's account, and repeat takers are blocked because they cannot earn a second VerifyYou token.
+MTurk is an open marketplace. That is its strength and its problem. Anyone with a worker account can accept your HIT, which means the population accepting it is, by default, unfiltered. Bots are real. Repeat-takers are real. A professional survey-farmer who has completed variants of your study before is real. The Qualification gate exists precisely for this.
+
+The advantage MTurk has over most platforms: the strongest enforcement option is also the cheapest. A custom Qualification blocks unverified workers before they ever see your main HIT, and a worker who fails the HumanCheck returns the short, cheap verification HIT for free. You pay nothing for a failed check.
 
 ## How the Qualification flow works
 
-The recruitment leg starts on MTurk; the survey leg is wherever your main HIT lives. The two are joined by a short, low-cost verification HIT that sits in the middle.
+The recruitment leg starts on MTurk. A short, low-cost verification HIT sits in the middle. Your main survey HIT is gated behind a custom Qualification that only workers who pass can hold.
 
 <Steps>
   <Step title="Create the VerifyYou Verified qualification">
-    We create a custom Qualification in your requester account via the MTurk Requester API, named something like "VerifyYou Verified - Study XYZ". It is non-assignable by workers; only your account can grant it. We give you the `QualificationTypeId` you need for the next steps, or you can look it up in your MTurk Requester console.
+    VerifyYou creates a custom Qualification in your requester account via the MTurk Requester API — named something like "VerifyYou Verified - Study XYZ". It is non-assignable by workers. Only your account can grant it. You get back a `QualificationTypeId`; keep it, you will need it for the main HIT.
   </Step>
-  <Step title="Post a short verification HIT">
-    Create a HIT with a low reward (typically $0.05 to $0.10, enough to attract workers but not your real incentive). Set the HIT URL to your VerifyYou gated link:
-
-    ```
-    https://app.verifyyou.com/verification/YOUR_VERIFICATION_ID
-    ```
-
-    MTurk automatically appends `workerId`, `assignmentId`, `hitId`, and `turkSubmitTo` as query parameters when a worker opens an external URL HIT. Pass these through using the `pass_params` field when you initialize the session, so they ride back on your return URL alongside the token.
-
-    Your `/v3/initialize` call for this HIT should look roughly like:
+  <Step title="Initialize a session and post a short verification HIT">
+    Call `/v3/initialize` from your server to create a verification session. MTurk appends `workerId`, `assignmentId`, `hitId`, and `turkSubmitTo` automatically when a worker opens an external URL HIT — include them in `pass_params` so they return to your completion page alongside the token.
 
     ```json
+    POST /v3/initialize
     {
       "verification_id": "your-verification-id",
       "external_tracker": "mturk-qual-batch-01",
-      "pass_params": ["workerId", "assignmentId", "hitId"],
+      "pass_params": { "workerId": "WORKER_ID", "assignmentId": "ASSIGNMENT_ID", "hitId": "HIT_ID" },
       "origin": "https://your-completion-page.example.com",
       "return_path": "/mturk/complete"
     }
     ```
 
-    `external_tracker` is echoed on webhooks (not on the return URL), which is how you match a completion back to a specific batch. The `pass_params` values are what travel with the respondent back to your `origin` + `return_path`.
+    The response is `{ url }` — a session URL at `app.verifyyou.com/v/SESSION`. Use that URL as the external URL in your verification HIT.
+
+    A note on `external_tracker`: it is echoed on webhooks only, not on the return URL. Use `pass_params` to carry anything you need back at completion.
+
+    Set the HIT reward low — typically $0.05 to $0.10. That is enough to attract workers without paying your real incentive for a check you want to keep cheap.
   </Step>
   <Step title="On pass: VerifyYou submits the HIT and grants the Qualification">
-    When a worker passes the liveness and uniqueness check, VerifyYou uses the `turkSubmitTo` value MTurk appended to submit the verification assignment on the worker's behalf, and grants your Qualification to that `workerId` via the MTurk API.
+    When a worker passes the liveness and uniqueness check, VerifyYou uses the `turkSubmitTo` value MTurk supplied to submit the verification assignment on the worker's behalf, then grants your Qualification to that `workerId` via the MTurk API.
 
-    The worker is then returned to your `origin` + `return_path` with `?vyt=TOKEN&vyc=1` plus the `pass_params` you passed through (including `workerId` and `assignmentId`).
+    The worker returns to `origin` + `return_path` with `?vyt=TOKEN&vyc=1` plus any `pass_params` you specified. Confirm server-side — `vyc` is a UI hint only, not a guarantee.
 
-    If you want to confirm the token on your completion page, make a server-side peek call:
+    To verify the token, call peek from your completion page:
 
     ```
     GET /v3/survey/peek?vyt=TOKEN
     Authorization: Bearer pk_val_FLOW_RAND
     ```
 
-    This is idempotent and does not burn the token. It returns `{ verified, reason }`. Workers who fail (`vyc=0`) return the HIT for free. You pay nothing for a failed verification.
+    Peek is idempotent and does not burn the token. It returns `{ verified, reason }`. Workers who fail return the HIT for free — no charge.
   </Step>
   <Step title="Post your main HIT with the Qualification requirement">
-    Create your real survey or task HIT and add a `QualificationRequirement` that the worker must hold your VerifyYou Verified qualification:
+    Create your real survey or task HIT with a `QualificationRequirement` that the worker must hold your VerifyYou Verified qualification:
 
     ```json
     {
@@ -62,39 +61,41 @@ The recruitment leg starts on MTurk; the survey leg is wherever your main HIT li
     }
     ```
 
-    Setting `ActionsGuarded` to `DiscoverPreviewAndAccept` means non-qualified workers cannot find, preview, or accept the HIT at all. The verification wall is invisible to them.
+    `ActionsGuarded: DiscoverPreviewAndAccept` means non-qualified workers cannot find, preview, or accept the HIT at all. The gate is invisible to them.
   </Step>
 </Steps>
 
 <Note>
-The Qualification is a true gate, not a soft one. A worker with no token never reaches your survey questions. There is no after-the-fact deletion step needed, and no CSV cleanup.
+The Qualification is a true gate, not a soft one. A worker with no verified token never reaches your survey questions. There is no after-the-fact deletion step, no CSV cleanup, no post-hoc dedup.
 </Note>
 
-## Simpler mode: paste the gated link directly as the HIT
+## Simpler mode: paste the gated link directly
 
-If you do not want to use the Qualification setup, you can post a single HIT whose external URL is the VerifyYou gated link. Workers who pass are redirected to your survey. Workers who fail return the HIT for free.
+If you skip the Qualification setup, post a single HIT whose external URL is the VerifyYou session URL from `/v3/initialize`. Workers who pass are redirected to your survey. Workers who fail return the HIT for free.
 
-This is still useful, but weaker than the Qualification approach for one reason: your main survey link is visible to anyone who accepts the HIT, so a worker who fails the check could theoretically navigate to it independently if your survey has no entry enforcement. Pair this mode with at least a token check at the start of your survey (see [Qualtrics](/survey/qualtrics) for an example, or use `POST /v3/survey/consume` on submission) to close that gap.
+Simpler, but weaker for one reason: your main survey link is visible to anyone who accepts the HIT. A worker who fails the check could navigate to it directly if your survey has no independent entry enforcement. Pair this mode with a token check at the survey start — see [Qualtrics](/survey/qualtrics) for one approach, or call `POST /v3/survey/consume?vyt=TOKEN` on submission to burn the token and block any second pass.
 
 ## Trade-offs
 
 <CardGroup cols={2}>
   <Card title="Qualification flow" icon="shield-check">
-    True gate: non-verified workers never see your HIT. Failed verifications return the cheap HIT for free, no cost to you. We handle the Qualification grant automatically on pass. Best for any study where panel purity matters most.
+    True gate. Non-verified workers never see your main HIT. Failed checks return the cheap verification HIT for free. VerifyYou grants the Qualification automatically on pass. Best when panel purity is the priority.
   </Card>
   <Card title="Direct link HIT" icon="link">
-    No Qualification setup required. Paste the gated link, post the HIT, done. Workers who fail return it free. Weaker entry control if your destination survey has no independent token check. Good for quick pilots or studies where you add a webhook on the survey side.
+    No Qualification setup required. Initialize a session, paste the returned URL, post the HIT. Workers who fail return it free. Weaker entry control unless your destination survey independently enforces the token. Good for quick pilots or when you add a consume call on the survey side.
   </Card>
 </CardGroup>
 
 ## Why uniqueness is what actually protects your data
 
-A worker can share a qualification code, but they cannot share a VerifyYou token bound to their face. The same person cannot earn a second token from the same study, because the uniqueness check recognises them and declines. This stops the repeat-taker and the professional survey-farmer at the source, before they touch your data, rather than catching them in a post-hoc dedup pass.
+A qualification code can be shared. A face cannot.
 
-The honest catch: the roughly 30-minute token TTL means a worker should proceed from the verification HIT to the main HIT promptly. If they accept the main HIT long after verifying, the token in their return URL will have expired. The Qualification itself does not expire, so the gate still holds; you just cannot re-check the token server-side after that window. For most MTurk workflows the gap between earning the Qualification and starting the main HIT is well inside 30 minutes.
+The same person cannot earn a second VerifyYou token from the same study. The uniqueness check recognises them and declines — a collision. That stops the repeat-taker and the professional survey-farmer at the source, before they touch your data, rather than catching duplicates in a post-hoc pass you may or may not remember to run.
 
-## Related pages
+One honest limit: the token TTL is roughly 30 minutes. A worker who earns the Qualification and then accepts the main HIT long after verifying will find the token in their return URL expired. The Qualification itself does not expire, so the gate still holds; you just cannot peek the token server-side after that window. For most MTurk workflows the gap between earning the Qualification and starting the main HIT is well inside 30 minutes.
 
-- [Choosing your flow](/choosing-your-flow) for a full comparison of recruitment and survey leg combinations.
-- [Prolific](/recruitment/prolific) if you want a managed panel with built-in completion tracking.
-- [Qualtrics](/survey/qualtrics) for guidance on enforcing the token at the survey entry point.
+## Where to go next
+
+- [Choosing your flow](/choosing-your-flow) — full comparison of recruitment and survey leg combinations.
+- [Prolific](/recruitment/prolific) — managed panel with built-in completion tracking, if you want more curation on the worker side.
+- [Qualtrics](/survey/qualtrics) — enforcing the token at the survey entry point, with a worked example.
