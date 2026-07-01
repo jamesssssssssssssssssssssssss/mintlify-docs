@@ -60,11 +60,15 @@ The token is embedded into a single-use URL or credential that the survey platfo
 One shared credential-delivery step at the end of the VerifyYou flow. Per-platform adapters call the platform's distribution or OTP API. No entry-gate wrapper needed — the platform's own link mechanism is the gate.
 
 <Note>
-Qualtrics carries a known timing edge: the Web Service element fires before the response is fully committed, so a webhook-delete backstop (Family C) is worth running in parallel. The single-use Distribution link is still the primary gate.
+Qualtrics carries a known timing edge: the Web Service element fires before the response is fully committed. Qualtrics Workflows Web Service tasks natively support DELETE, so the auto-delete backstop can live entirely inside Qualtrics — a Workflow with a condition (`verified != true`) triggers a Web Service DELETE call carrying `X-API-TOKEN`, no shared receiver required. The shared webhook receiver (Family C) remains the generic path for platforms that cannot do this natively; for Qualtrics it is optional. The single-use Distribution link is still the primary gate.
 </Note>
 
 <Note>
 Alchemer OTP pool: confirm live whether an OTP burns on login-click or only on completion before marking this gate as closed.
+</Note>
+
+<Note>
+MTurk qualification: after verification passes, grant the worker a qualification via `AssociateQualificationWithWorker`. The main HIT must set `ActionsGuarded=DiscoverPreviewAndAccept` on its qualification requirement so it is hidden from workers who have not yet been granted — unqualified workers cannot even discover or preview it.
 </Note>
 
 ### Family B — Wrapper or embed entry gate
@@ -81,7 +85,7 @@ The wrapper is the right home for the failure redirect. When `vyc=0` arrives fro
 
 ### Family C — Webhook auto-delete backstop
 
-**Platforms: Typeform, Jotform, Tally, SurveyMonkey, Google Forms (via Apps Script), Qualtrics (backstop)**
+**Platforms: Typeform, Jotform, Tally, SurveyMonkey, Google Forms (via Apps Script), Qualtrics (optional, native alternative available)**
 
 When a respondent submits the survey, the platform fires a completion webhook to a shared VerifyYou receiver. The receiver reads the `vyt` hidden-field value, calls `peek`, and if the token is missing, invalid, or already consumed, calls the platform's delete-response API to remove the submission before it reaches any CSV or dashboard.
 
@@ -89,7 +93,7 @@ One shared webhook receiver endpoint. Per-platform adapters implement signature 
 
 `consume` is called by the receiver only after a valid response is accepted, so the token cannot be reused even if the webhook fires twice.
 
-Family C is always paired with Family B for platforms that lack a single-use link mechanism. For Qualtrics it runs as a backstop alongside Family A.
+Family C is always paired with Family B for platforms that lack a single-use link mechanism. Qualtrics does not need the shared receiver at all — its own Workflows Web Service task can issue the DELETE directly, using the same condition-then-DELETE pattern described in Family A. The shared receiver stays available as an alternate path if a Qualtrics account prefers a centralized backstop.
 
 ### Family D — Direct call
 
@@ -107,11 +111,11 @@ Two recruitment sources need specific handling at the entry point, before the Ve
 
 **Prolific — Secure External URL JWT verification**
 
-Prolific signs the redirect with a short-lived RS256 JWT so you can confirm the respondent actually came from Prolific, not a guessed link. The shared core verifies this JWT at entry against Prolific's JWKS endpoint before initializing a verification session. Details at [/recruitment/prolific](/recruitment/prolific).
+Prolific signs the redirect with a short-lived RS256 JWT so you can confirm the respondent actually came from Prolific, not a guessed link. The token arrives as a `prolific_token` URL parameter, expires in roughly two minutes, and verifies against the JWKS published at `api.prolific.com/.well-known/study/jwks.json`. The shared core verifies this JWT at entry before initializing a verification session. Details at [/recruitment/prolific](/recruitment/prolific).
 
 **Cint — S2S postback**
 
-Cint expects a server-to-server postback when a respondent completes or is disqualified. The shared core fires this postback from the VerifyYou server, not from the respondent's browser, so it cannot be spoofed by someone intercepting the return URL. Browser redirects fail silently in panel webviews; S2S does not.
+Cint expects a server-to-server disposition call when a respondent completes, is screened out, hits quota, or fails quality — a `POST` to `https://s2s.cint.com/fulfillment/respondents/transition` with the RID and status code in the JSON body (`complete=5`, `screenout=2`, `quota=3`, `quality=4`). The shared core fires this call from the VerifyYou server, not from the respondent's browser, so it cannot be spoofed by someone intercepting the return URL. S2S runs alongside the browser redirect as a hybrid, not a replacement for it — it is authoritative when the two disagree, since browser redirects fail silently in panel webviews and S2S does not.
 
 ---
 
@@ -131,7 +135,7 @@ Cint expects a server-to-server postback when a respondent completes or is disqu
     Build the shared wrapper service. Wire per-platform URL construction adapters. Connect to the failure redirect from step 1.
   </Step>
   <Step title="Family A (credential delivery)">
-    Build per-platform distribution adapters — Qualtrics first (Distributions API + Family C backstop wired), then Alchemer OTP pool (confirm burn timing before marking closed), then MTurk qualification.
+    Build per-platform distribution adapters — Qualtrics first (Distributions API; auto-delete backstop via a native Workflow Web Service DELETE task, no shared receiver required), then Alchemer OTP pool (confirm burn timing before marking closed), then MTurk qualification.
   </Step>
   <Step title="Recruitment hardening">
     Add Prolific JWT verification and Cint S2S postback to the entry flow.

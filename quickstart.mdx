@@ -5,7 +5,7 @@ description: "Three steps to put a HumanCheck in front of your survey so only re
 
 Three steps. A gated link, a check, a validated token. Real, unique humans on the other side.
 
-The HumanCheck is a ~20-second liveness and uniqueness check that sits in front of your survey like a screener criterion. Your respondent completes it, earns a token, and your survey confirms that token before counting the response. No valid token, no complete.
+The HumanCheck is a quick liveness and uniqueness check, a face scan that takes a few seconds, that sits in front of your survey like a screener criterion. Your respondent completes it, earns a token, and your survey confirms that token before counting the response. No valid token, no complete.
 
 <Note>
 How tightly you can enforce that token depends on which survey tool you use. Some platforms let you block entry before a single question loads. Others catch it at submission. See [Platform tiers](/platform-tiers) and [Survey tool overview](/survey/overview) before you pick your flow.
@@ -92,7 +92,7 @@ How tightly you can enforce that token depends on which survey tool you use. Som
 Once all three steps are in place:
 
 1. A respondent clicks your recruitment link and lands on the VerifyYou check.
-2. They complete a ~20-second liveness selfie. We check liveness — a live person, present now, not a photo or replay — and then uniqueness: have we seen this face before?
+2. They complete a quick liveness selfie. We check liveness — a live person, present now, not a photo or replay — and then uniqueness: have we seen this face before?
 3. If they pass, they land on your survey with `?vyt=TOKEN&vyc=1`. Treat `vyc` as a UI hint only; always confirm the token server-side. Your systems receive a verdict — never a face, name, or image.
 4. Your survey validates the token. A bad or missing token is caught before any question is answered (true gate) or before the response saves (soft gate + webhook).
 5. Only real, unique humans become completes.

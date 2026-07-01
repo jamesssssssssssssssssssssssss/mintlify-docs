@@ -25,6 +25,12 @@ Think of these as *when* a bad respondent is caught, not *whether*.
   </Card>
 </CardGroup>
 
+## Or start passive
+
+Don't see your platform below, or not ready to wire up any of this yet? You don't need an integration to start. On any platform — including ones with no integration story at all — you can run the check as a mid-survey step and cross-reference the results afterward: export a verified/not-verified column and join it to your data on session or participant ID.
+
+It is not a gate. Bad respondents still submit, and you filter them out after the fact rather than before. But it needs zero platform work, so it is the fastest way to run your first study while you decide which tier to build toward. See [The Screener](/the-screener) for the full passive flow.
+
 ## Platform comparison
 
 | Platform | Tier | Family | Best flow |
@@ -45,17 +51,17 @@ MTurk sits on the recruitment side, not here. It enforces via a custom Qualifica
 
 ## How the token moves through the survey leg
 
-After the respondent passes their liveness and uniqueness check, we return them to your study with a token on the URL:
+After the respondent passes their liveness and uniqueness check, we return them to your redirect URL with a token on the query string:
 
 ```
-https://yourstudy.typeform.com/to/XYZ?pid=abc123&vyt=tok_live_...&vyc=1
+https://yourdomain.com/wrapper?pid=abc123&vyt=tok_live_...&vyc=1
 ```
 
 `pid` is carried back via `pass_params` — you set that when you initialize the session so your participant ID travels with the respondent on the return. `vyt` is the token. `vyc=1` is a UI hint only — confirm server-side via the token, never trust `vyc` alone. Then your tool enforces one of three ways:
 
 **True gate tools (Qualtrics, Alchemer).** The token never needs to be read by the platform itself. The gate is the credential: a personal link, a one-time password. Only a respondent who passed gets one. The platform enforces by controlling who has a valid entry path at all.
 
-**Soft gate tools (Typeform, Jotform, Tally, Google Forms).** The token rides in a hidden field or a prefilled question. On submission your webhook calls `GET /v3/survey/peek` and, if verified, calls `POST /v3/survey/consume` to burn it. If either check fails, delete the submission via the platform API.
+**Soft gate tools (Typeform, Jotform, Tally, Google Forms).** The token rides in a hidden field or a prefilled question. For Typeform specifically, this requires a wrapper page as the redirect target, not a direct link straight into Typeform — hidden fields ride the `#` fragment on direct Typeform links, and the embed SDK only picks them up via its hidden-field option, so your server-side wrapper is what reads `vyt` from the query string and forwards it into Typeform correctly. On submission your webhook calls `GET /v3/survey/peek` and, if verified, calls `POST /v3/survey/consume` to burn it. If either check fails, delete the submission via the platform API.
 
 **SurveyMonkey.** Advanced Branching on a custom variable disqualifies a bad respondent on page 1, before they reach your questions proper. This is platform-native enforcement rather than a webhook-delete — bad respondents are terminated by the survey logic itself before capture.
 

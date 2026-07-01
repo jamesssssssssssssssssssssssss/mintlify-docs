@@ -17,7 +17,7 @@ Family letters match [the architecture page](/build/architecture): A = single-us
 | **B — Wrapper page** (Typeform, Jotform, Tally, SurveyMonkey, Google Forms) | Hosted entry page that calls `/v3/survey/peek`, blocks on a bad token, then redirects to the real survey URL with `pass_params` forwarded | Pastes the wrapper URL as the survey start link in the platform; no further platform config needed |
 | **C — Webhook delete** (same platforms) | Webhook receiver per platform that calls `/v3/survey/peek` on submission and deletes the response via the platform API if the token is invalid | Adds the webhook URL in the platform's notification settings; supplies their platform API key once |
 | **D — Direct call** (Formspark, own app) | Core endpoints only: `peek` and `consume` behind `pk_val_` keys, documented | Developer calls `peek` before saving a submission; nothing else required |
-| **Recruitment hardening** | Prolific JWT signature verification, MTurk qualification grant/check, Cint S2S postback signing | Supplies their platform study ID or qualification ID once per study |
+| **Recruitment hardening** | Prolific: verify the `prolific_token` parameter against Prolific's JWKS. MTurk: `AssociateQualificationWithWorker` plus `ActionsGuarded=DiscoverPreviewAndAccept` on the main HIT. Cint: S2S `POST .../respondents/transition` with the respondent ID (`RID`) in the body | Supplies their platform study ID or qualification ID once per study |
 
 <Note>
 Rows B and C are two shared services — wrapper and webhook-delete — not 2N separate adapters. Each new platform in that family needs only a thin adapter on top of the shared logic.
@@ -53,15 +53,17 @@ Sequence by leverage. Each step unblocks more downstream work than the one after
 
     The service generates a personal link per verified respondent (calling `consume` at generation, not at survey completion), distributes it, and registers it in the Qualtrics mailing list. Researchers enable the personal links panel on their survey once. No per-study webhook config needed.
 
+    Qualtrics' own Workflow tool can add a DELETE backstop natively: a Web Service task in a Workflow can issue a DELETE call with the researcher's own API token, so the researcher can configure response-deletion themselves without any code from us. VerifyYou executing those deletes on the researcher's behalf is an optional variant for teams who would rather not wire up the Workflow task, not a requirement for the gate to work.
+
     See [/survey/qualtrics](/survey/qualtrics) for the full setup and the Web Service timing note below.
   </Step>
 
   <Step title="Recruitment hardening (Prolific JWT, MTurk qualification, Cint S2S)">
     Panel fraud caught before respondents start. Each platform has a different mechanism.
 
-    - **Prolific**: verify the study JWT signature on our side so a respondent cannot swap someone else's `PROLIFIC_PID` into the return URL.
-    - **MTurk**: grant a qualification to a Worker only after a verified token is consumed; the HIT requires that qualification.
-    - **Cint**: sign the S2S redirect so the panel provider accepts our completion signal.
+    - **Prolific**: verify the `prolific_token` parameter against Prolific's JWKS on our side so a respondent cannot swap someone else's `PROLIFIC_PID` into the return URL.
+    - **MTurk**: call `AssociateQualificationWithWorker` only after a verified token is consumed; the main HIT requires that qualification via `ActionsGuarded=DiscoverPreviewAndAccept`.
+    - **Cint**: send the S2S `POST .../respondents/transition` call with the respondent ID (`RID`) in the body so the panel provider accepts our completion signal.
 
     See [/recruitment/prolific](/recruitment/prolific) and [/recruitment/mturk](/recruitment/mturk) for platform-specific detail.
   </Step>
@@ -84,8 +86,12 @@ A few design decisions deserve a deliberate choice before code is written.
     Burning at login-click is the stricter choice and matches the true-gate tier. Burning at completion introduces a window where the respondent holds a valid but unconsumed token while inside the survey. Decide which timing fits your security requirements before building the adapter. The failure redirect (core, step 1) needs to exist before Alchemer can cleanly route screen-outs.
   </Accordion>
 
-  <Accordion title="Tally hidden field as IF-condition vs wrapper page">
+  <Accordion title="Tally hidden field: conditional-logic jump (open question)">
     Tally supports hidden fields and conditional logic — show/hide blocks based on field values. It is technically possible to pass `vyt` and `vyc` as hidden fields and gate questions behind an IF condition that checks `vyc=1`. The limitation: this is a soft gate at best. The form still loads before the condition is evaluated, and a respondent who manipulates the hidden field value bypasses it entirely.
+
+    Duplicate prevention is resolved: Tally's duplicate-prevention setting can key on any chosen field, including a hidden field, confirmed against Tally's own docs. That is no longer an open question.
+
+    What is still open: whether a Tally hidden field can drive a conditional-logic *jump* (redirecting to a different page or ending the form early), not just showing or hiding a block on the same page. This is undocumented — test it directly in the Tally builder before relying on it.
 
     The wrapper page (step 2) is the right choice for any study where entry-blocking matters. Use the native hidden-field path only when a researcher explicitly needs Tally's native logic for something else and understands the tradeoff. The webhook-delete backstop applies either way.
   </Accordion>

@@ -1,11 +1,11 @@
 ---
 title: "Amazon Mechanical Turk"
-description: "Gate your MTurk HITs with a custom Qualification \u2014 unverified workers never see your main task, and a returned HIT costs you nothing."
+description: "Gate your MTurk HITs with a custom Qualification \u2014 set ActionsGuarded to DiscoverPreviewAndAccept so unverified workers never see your main task, and a returned HIT costs you nothing."
 ---
 
 MTurk is an open marketplace. That is its strength and its problem. Anyone with a worker account can accept your HIT, which means the population accepting it is, by default, unfiltered. Bots are real. Repeat-takers are real. A professional survey-farmer who has completed variants of your study before is real. The Qualification gate exists precisely for this.
 
-The advantage MTurk has over most platforms: the strongest enforcement option is also the cheapest. A custom Qualification blocks unverified workers before they ever see your main HIT, and a worker who fails the HumanCheck returns the short, cheap verification HIT for free. You pay nothing for a failed check.
+The advantage MTurk has over most platforms: the strongest enforcement option is also the cheapest. A custom Qualification blocks unverified workers from accepting your main HIT, and with the right setting, from finding or previewing it at all. A worker who fails the HumanCheck and returns the assignment without submitting costs you nothing. That protection is not automatic, though: if a worker submits the verification HIT instead of returning it, MTurk auto-approves and charges you after your account's approval delay elapses, whether or not you take any action.
 
 ## How the Qualification flow works
 
@@ -36,7 +36,7 @@ The recruitment leg starts on MTurk. A short, low-cost verification HIT sits in 
     Set the HIT reward low — typically $0.05 to $0.10. That is enough to attract workers without paying your real incentive for a check you want to keep cheap.
   </Step>
   <Step title="On pass: VerifyYou submits the HIT and grants the Qualification">
-    When a worker passes the liveness and uniqueness check, VerifyYou uses the `turkSubmitTo` value MTurk supplied to submit the verification assignment on the worker's behalf, then grants your Qualification to that `workerId` via the MTurk API.
+    When a worker passes the liveness and uniqueness check, the return page (still inside the HIT, in the worker's own browser) auto-submits the assignment by POSTing the `assignmentId` to the `turkSubmitTo` URL MTurk supplied. MTurk requires that POST to come from the worker's browser session; a server cannot submit it out-of-band. VerifyYou then grants your Qualification to that `workerId` server-side via the `AssociateQualificationWithWorker` API operation (the older `AssignQualification` name you may see in some references is deprecated).
 
     The worker returns to `origin` + `return_path` with `?vyt=TOKEN&vyc=1` plus any `pass_params` you specified. Confirm server-side — `vyc` is a UI hint only, not a guarantee.
 
@@ -47,10 +47,10 @@ The recruitment leg starts on MTurk. A short, low-cost verification HIT sits in 
     Authorization: Bearer pk_val_FLOW_RAND
     ```
 
-    Peek is idempotent and does not burn the token. It returns `{ verified, reason }`. Workers who fail return the HIT for free — no charge.
+    Peek is idempotent and does not burn the token. It returns `{ verified, reason }`. Workers who return the HIT unsubmitted cost you nothing. If a failed worker submits the assignment anyway rather than returning it, MTurk will auto-approve and charge you once your requester-set approval delay elapses (up to 30 days) unless you actively reject it first — silence is not free on a submitted assignment.
   </Step>
   <Step title="Post your main HIT with the Qualification requirement">
-    Create your real survey or task HIT with a `QualificationRequirement` that the worker must hold your VerifyYou Verified qualification:
+    Create your real survey or task HIT with a `QualificationRequirement` that the worker must hold your VerifyYou Verified qualification. This is the step that matters most: by default, MTurk's `ActionsGuarded` value is `"Accept"`, which only blocks unqualified workers from accepting the HIT — they can still find it in search and open the preview. To make the gate invisible, you must explicitly set `ActionsGuarded` to `"DiscoverPreviewAndAccept"`:
 
     ```json
     {
@@ -61,17 +61,17 @@ The recruitment leg starts on MTurk. A short, low-cost verification HIT sits in 
     }
     ```
 
-    `ActionsGuarded: DiscoverPreviewAndAccept` means non-qualified workers cannot find, preview, or accept the HIT at all. The gate is invisible to them.
+    With `ActionsGuarded: DiscoverPreviewAndAccept` set, non-qualified workers cannot find, preview, or accept the HIT at all. Leave it at the MTurk default and they can still see and preview your main HIT, they just cannot click Accept.
   </Step>
 </Steps>
 
 <Note>
-The Qualification is a true gate, not a soft one. A worker with no verified token never reaches your survey questions. There is no after-the-fact deletion step, no CSV cleanup, no post-hoc dedup.
+The Qualification is a true gate, not a soft one, as long as you set `ActionsGuarded` to `DiscoverPreviewAndAccept` on the main HIT. A worker with no verified token never reaches your survey questions. There is no after-the-fact deletion step, no CSV cleanup, no post-hoc dedup.
 </Note>
 
 ## Simpler mode: paste the gated link directly
 
-If you skip the Qualification setup, post a single HIT whose external URL is the VerifyYou session URL from `/v3/initialize`. Workers who pass are redirected to your survey. Workers who fail return the HIT for free.
+If you skip the Qualification setup, post a single HIT whose external URL is the VerifyYou session URL from `/v3/initialize`. Workers who pass are redirected to your survey. Instruct workers who fail to return the HIT unsubmitted — a returned assignment costs you nothing. Reserve rejection for clear bad-faith submissions (a worker who fails and submits anyway with fabricated survey answers), not as a routine screen-out tool: mass rejection dings worker approval ratings and your reputation as a requester, and the community norm here is exclusion, not punishment.
 
 Simpler, but weaker for one reason: your main survey link is visible to anyone who accepts the HIT. A worker who fails the check could navigate to it directly if your survey has no independent entry enforcement. Pair this mode with a token check at the survey start — see [Qualtrics](/survey/qualtrics) for one approach, or call `POST /v3/survey/consume?vyt=TOKEN` on submission to burn the token and block any second pass.
 
@@ -79,10 +79,10 @@ Simpler, but weaker for one reason: your main survey link is visible to anyone w
 
 <CardGroup cols={2}>
   <Card title="Qualification flow" icon="shield-check">
-    True gate. Non-verified workers never see your main HIT. Failed checks return the cheap verification HIT for free. VerifyYou grants the Qualification automatically on pass. Best when panel purity is the priority.
+    True gate, with `ActionsGuarded: DiscoverPreviewAndAccept` set. Non-verified workers never see your main HIT. Workers who fail and return the verification HIT unsubmitted cost you nothing. VerifyYou grants the Qualification automatically on pass. Best when panel purity is the priority.
   </Card>
   <Card title="Direct link HIT" icon="link">
-    No Qualification setup required. Initialize a session, paste the returned URL, post the HIT. Workers who fail return it free. Weaker entry control unless your destination survey independently enforces the token. Good for quick pilots or when you add a consume call on the survey side.
+    No Qualification setup required. Initialize a session, paste the returned URL, post the HIT. Instruct workers who fail to return it unsubmitted, at no cost to you. Weaker entry control unless your destination survey independently enforces the token. Good for quick pilots or when you add a consume call on the survey side.
   </Card>
 </CardGroup>
 

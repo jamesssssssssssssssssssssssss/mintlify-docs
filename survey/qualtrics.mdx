@@ -9,7 +9,7 @@ Qualtrics is where this integration works hardest. The reason is structural, not
 
 A standard Qualtrics survey has an anonymous link anyone can open. We close that link entirely — Invitation Only mode, configured once, no exceptions. Then, for every respondent who passes liveness and uniqueness, we call the Qualtrics Distributions API and generate a **single-use personal distribution link** bound to that respondent and that survey. We redirect them straight to it.
 
-That personal link is both the credential and the gate. It is tied to one verified face, it expires after one use, and a leaked copy dies the moment the first person clicks it. There is no anonymous entry point to probe, no shared URL to forward. And because the uniqueness check blocks a repeat attempt before the distribution step ever runs, the same face cannot earn a second link no matter how many times they try.
+That personal link is both the credential and the gate. It is tied to one verified face, it is spent the moment it is first opened, and a leaked copy dies on the second click. There is no anonymous entry point to probe, no shared URL to forward. By default the link also expires 60 days after the distribution is created — configurable at creation time in Qualtrics, not after. And because the uniqueness check blocks a repeat attempt before the distribution step ever runs, the same face cannot earn a second link no matter how many times they try.
 
 No unverified respondent ever sees your survey questions. That is the promise this flow keeps.
 
@@ -23,8 +23,8 @@ No unverified respondent ever sees your survey questions. That is the promise th
   <Card title="Needs a scoped API token" icon="key">
     You paste a Qualtrics API token into your VerifyYou dashboard. Contacts and distributions write permission on the target survey. Without it the distribution step cannot run.
   </Card>
-  <Card title="Webhook-delete backstop" icon="layer-group">
-    A post-submit Workflow catches any edge case where a response slips through — a Qualtrics Web Service timing bug can cause survey-flow checks to fire late or be skipped — and deletes the response before it reaches your dataset.
+  <Card title="Native delete backstop" icon="layer-group">
+    A post-submit Workflow catches any edge case where a response slips through — a Qualtrics Web Service timing bug can cause survey-flow checks to fire late or be skipped — and deletes the response before it reaches your dataset, entirely inside Qualtrics.
   </Card>
 </CardGroup>
 
@@ -42,13 +42,13 @@ No unverified respondent ever sees your survey questions. That is the promise th
   <Step title="Connect your Qualtrics API token">
     In the VerifyYou dashboard, open the Flow you are configuring and paste in a scoped Qualtrics API token. The token needs contacts and distributions write permission on the target survey.
 
-    We use this token to call the Distributions API on your behalf: create a contact, create a distribution for that contact on your survey, retrieve the resulting personal link, and redirect the verified respondent to it. They land in your survey already verified, with no additional token or parameter to handle on your end. The personal link is the proof.
+    We use this token to call the Distributions API on your behalf: create a contact in a mailing list, create a distribution scoped to both that mailing list and that contact — Qualtrics requires `mailingListId` and `contactId` together on the Create Distribution call, contact ID alone is not enough — then GET the distribution's links and redirect the verified respondent to the personal link. They land in your survey already verified, with no additional token or parameter to handle on your end. The personal link is the proof.
   </Step>
 
   <Step title="Add a post-submit Workflow as the backstop">
-    In **Workflows**, create a workflow that fires on every survey completion. Add a condition on the embedded data field `vy_verified`: if it is not equal to `true`, trigger a **Web Service** task that calls the VerifyYou response-deletion endpoint for this Flow, passing the Qualtrics response ID.
+    In **Workflows**, create a workflow that fires on every new response. Add a condition on the embedded data field `vy_verified`: treat anything other than `true` — including an empty or missing value — as unverified. On that branch, add a **Web Service** task set to `DELETE` against `https://yourdatacenter.qualtrics.com/API/v3/surveys/{surveyId}/responses/{responseId}`, with your `X-API-TOKEN` header set.
 
-    We bridge the Qualtrics REST API deletion using your connected API token — the native Qualtrics Web Service task cannot issue an HTTP `DELETE` on its own.
+    Qualtrics Web Service tasks support `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`, so this entire backstop runs natively inside Qualtrics — no call out to VerifyYou required. If you would rather have VerifyYou execute the delete and keep an audit trail on our side, point the Web Service task at our webhook instead and we will issue the delete for you; that variant is optional, the native path above is simpler and is what we recommend.
 
     <Warning>
       Qualtrics has a known timing bug: Survey Flow Web Service elements sometimes fire at the **end** of the survey rather than at their position in the flow. This is exactly why a Workflow-level backstop matters more than any in-survey check. If you add a Survey Flow Web Service element to double-check status at entry, treat both `false` **and** an empty or missing `vy_verified` value as unverified — a blank result means the element timed out or fired too late, not that the respondent passed. Never rely on a Survey Flow Web Service element alone.
@@ -88,7 +88,7 @@ The honest caveat: a response exists briefly in Qualtrics between submit and del
 
 When a respondent passes verification, we call the Qualtrics Distributions API and mint a link bound to your specific Flow, their verified identity, and your survey. That link:
 
-- Is valid for one use only and expires — Qualtrics native single-use distribution links enforce this at the platform level.
+- Is valid for one use only — it is spent the instant it is first opened, not after a full submit. Qualtrics native single-use distribution links enforce this at the platform level. By default it also expires 60 days after creation; that window is configurable when the distribution is created, not afterward.
 - Cannot be earned a second time by the same face — the uniqueness check blocks a repeat attempt before the Distributions API call ever runs.
 - Carries no `?vyt=` parameter on your end. The verification already happened; the personal link is the artifact that carries that proof into Qualtrics.
 

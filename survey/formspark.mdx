@@ -5,13 +5,13 @@ description: "Gate your Formspark form before a response is ever saved \u2014 a 
 
 Formspark hands you a plain HTML form you host yourself. That is the best possible architecture for a HumanCheck gate.
 
-Because you control the page, you can run the token check in a JavaScript submit listener — before the browser calls Formspark at all. A bad respondent never produces a saved response. There is no management API to call, no webhook to wire up, nothing to delete. The gate is the check itself.
+Because you control the page, you can run the token check in a JavaScript submit listener — before the browser calls Formspark at all. A bad respondent never produces a saved response. Formspark has no documented submissions API at all — no programmatic read or delete, only dashboard search and export — so gating before save is the only way to keep bad responses out. The gate is the check itself.
 
 For researchers: the HumanCheck sits in the entry leg as a screener criterion — real, unique, live — before your questions even load. When it passes, the token lands on your form page and the listener confirms it silently. The respondent never notices.
 
 <CardGroup cols={2}>
   <Card title="Enforcement tier" icon="shield-check">
-    **Direct-call true gate.** The token is verified before the form submits. A failed or missing ticket never reaches Formspark's servers.
+    **Direct-call true gate.** Your JS intercepts the submit flow and verifies the token before posting programmatically. A failed or missing ticket never reaches Formspark's servers.
   </Card>
   <Card title="What you need" icon="list-check">
     A VerifyYou Flow with its publishable validation key (`pk_val_...`), a Formspark form ID, and any HTML page you control as the host.
@@ -20,7 +20,7 @@ For researchers: the HumanCheck sits in the entry leg as a screener criterion �
 
 ## How it works
 
-The respondent arrives on your page carrying `?vyt=TOKEN` in the URL — placed there by the HumanCheck at the recruitment leg. Your submit listener intercepts the form, calls the peek endpoint to confirm the token, and only allows the native submit if the check passes.
+The respondent arrives on your page carrying `?vyt=TOKEN` in the URL — placed there by the HumanCheck at the recruitment leg. Your submit listener intercepts the form's submit flow, calls the peek endpoint to confirm the token, and only then posts the form data programmatically — the same pattern Formspark's own [AJAX documentation](https://documentation.formspark.io/setup/ajax.html) describes: attach a JS handler, prevent the default submit, and `fetch()` to `submit-form.com/YOUR_FORM_ID` yourself once you're ready.
 
 Peek is idempotent. It does not burn the token. That means you can record the `vyt` value inside the submission itself for later audit or re-check without any conflict.
 
@@ -82,8 +82,14 @@ Peek is idempotent. It does not burn the token. That means you can record the `v
           return;
         }
 
-        // Token is valid. Let the form submit normally.
-        e.target.submit();
+        // Token is valid. Post the form data programmatically, the way
+        // Formspark's own AJAX docs describe.
+        await fetch(e.target.action, {
+          method: 'POST',
+          body: new FormData(e.target),
+          headers: { Accept: 'application/json' }
+        });
+        window.location.href = '/thank-you';
       });
     </script>
     ```
@@ -102,15 +108,22 @@ Peek is idempotent. It does not burn the token. That means you can record the `v
     </script>
     ```
 
-    If you are already using the [Formspark formtrack script](https://documentation.formspark.io/setup/script.html), add `data-formtrack-params="vyt"` to capture the URL parameter automatically without a hidden field.
+    If you are already using the [Formspark formtrack script](https://documentation.formspark.io/setup/script.html), it captures UTM parameters plus referrer by default — a custom parameter like `vyt` is only captured if you list it explicitly. Add `data-formtrack-params="vyt"` alongside `data-formtrack` to capture it automatically without a hidden field:
+
+    ```html
+    <script src="https://unpkg.com/@formspark/formtrack" async></script>
+    <form data-formtrack data-formtrack-params="vyt" action="https://submit-form.com/YOUR_FORM_ID">
+      ...
+    </form>
+    ```
   </Step>
 </Steps>
 
 ## Trade-offs
 
 <CardGroup cols={2}>
-  <Card title="No management API needed" icon="circle-check">
-    The gate runs before save, so a bad respondent never produces a stored response. There is nothing to clean up.
+  <Card title="No submissions API to fall back on" icon="circle-check">
+    Formspark has no documented submissions API — no programmatic read or delete, only dashboard search and export. The gate runs before save, so a bad respondent never produces a stored response and there is nothing to clean up.
   </Card>
   <Card title="Client-side check" icon="triangle-exclamation">
     A sufficiently determined respondent could disable JavaScript and bypass the listener. For high-stakes studies, add a server-side re-check of the recorded `vyt` before treating a response as final.

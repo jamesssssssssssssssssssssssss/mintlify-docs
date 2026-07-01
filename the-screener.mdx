@@ -19,7 +19,7 @@ A check turns some traffic away, and most of what it turns away is the traffic y
 
 ## Where it sits in the flow
 
-Put it at the point of value. After your screener questions, before the paid complete.
+Put it at the point of value. After your screener questions, before the paid complete. There are two ways to place it: at the front door, as a gated link before question one, or as a mid-survey screener step further into the questionnaire. Either way it is still a screener criterion, it just moves depending on how your study is built.
 
 <Steps>
   <Step title="Respondent enters and answers your screener">
@@ -34,6 +34,38 @@ Put it at the point of value. After your screener questions, before the paid com
 </Steps>
 
 This is the whole point of placing it here. The complete is the unit you pay for, roughly $3 to $7 for a consumer complete and $50 to $100 or more for professional and B2B. You do not want to protect the survey after you have already bought the bad respondent. You want to catch them at the screener, where a terminate costs you nothing.
+
+<Note>
+The HumanCheck replaces the trap question's job of catching fake and duplicate respondents, but it does not catch speeders or straight-liners. A real, unique human can still rush your survey without paying attention. Keep a speeder or attention check in place for data quality. The two are not redundant: one confirms the person, the other confirms the data.
+</Note>
+
+## Start passive: the verified column
+
+You do not have to gate anything to start. A researcher who called us put it plainly: "if I had a column that said verified or not verified, I could compare them." That is the passive flow, and it is the natural first study.
+
+Add the HumanCheck as a step in your survey, mid-questionnaire, the same link-out-and-back you would use for any external task. It carries your session or participant id via `pass_params`, so the respondent leaves for the hosted check, completes it, and returns to the next question. Nothing gates. Nothing gets held. Every respondent finishes the survey regardless of what the check found.
+
+<Steps>
+  <Step title="Add the check as a survey step">
+    Insert a link out to the hosted check wherever it fits, carrying your session or participant id via `pass_params`. No platform integration and nothing to configure beyond the link itself.
+  </Step>
+  <Step title="Respondents complete it mid-survey">
+    They take the check and continue on to the rest of your questions. Real or not, live or not, they finish and land in your raw export.
+  </Step>
+  <Step title="After fielding, you get a verified column">
+    Join your export against the Activity Log by session or participant id, and you have a verified / not-verified column for every complete.
+  </Step>
+</Steps>
+
+From there you have two moves. Compare the two groups to see what the unverified respondents were doing to your data, or start paying only for the verified completes.
+
+<Note>
+Honest about what this catches: it catches nothing in real time. A bad respondent still finishes your survey and shows up in your raw export exactly like everyone else. The filtering happens after fielding, when you join the verified column in, not during. If you want it to stop bad respondents before they count as a complete, that is the gated flow above, not this one.
+</Note>
+
+Today the join comes from the VerifyYou Activity Log, which shows date verified and external id per respondent. A CSV export of the Activity Log is on the build list; until it ships, ask us for the join file and we will get it to you.
+
+This is why passive is the natural first study. Run one study passive, with no gating and nothing to configure, and see your panel's real verified rate. Once you know the number, turn on gating for the studies where it matters.
 
 ## The two ways teams buy it
 

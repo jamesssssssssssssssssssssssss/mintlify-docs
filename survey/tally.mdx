@@ -102,16 +102,18 @@ No wrapper page. Verification happens through a Tally hidden field, a logic rule
     In the logic builder, add a rule: if `vyt` **is empty**, jump to the disqualification screen. This fires when a respondent clicks Next, catching anyone who arrived without passing through the VerifyYou link.
 
     <Note>
-      Confirm in Tally's logic builder that the `vyt` hidden field appears as an available IF-condition source. The field list populates from existing fields in the form, so the hidden field must exist before you open the logic panel.
+      Tally's conditional logic docs cover conditions on input blocks; a hidden field driving the jump is not explicitly documented, so test this rule in the builder before relying on it in production. If it does not work as expected, the webhook-delete backstop in Step 4 still catches any submission that lacks a valid token, so you are covered either way.
     </Note>
   </Step>
   <Step title="Enable Prevent duplicate submissions on the vyt field">
-    In your Tally form settings, turn on **Prevent duplicate submissions** and select `vyt` as the uniqueness key. This blocks the same token from being submitted twice at the platform level, before the webhook even fires.
+    In your Tally form settings (**Settings > Access**), turn on **Prevent duplicate submissions** and select `vyt` as the uniqueness key. Tally can key uniqueness on any field you choose, including a hidden one, so `vyt` works. This blocks a resubmission of the same token value at the platform level, before the webhook even fires.
+
+    Two caveats worth knowing. First, this only blocks a *replay of the same value* — a respondent who fabricates a different `vyt` string sails past the duplicate check and gets caught downstream by the webhook peek instead. Second, Tally only checks submissions made after you flip the toggle on; anything submitted earlier is not retroactively deduplicated.
   </Step>
   <Step title="Set up the FORM_RESPONSE webhook — and make sure it deletes, not just flags">
     This is the step that turns a soft gate into a soft-gate auto-reject. In Tally integrations, add a webhook pointing to your validation endpoint. When Tally calls your endpoint on `FORM_RESPONSE`, your server must:
 
-    1. Extract the `vyt` value from the submission fields.
+    1. Extract the `vyt` value from the submission's `fields` array — hidden fields come through in the `FORM_RESPONSE` payload with `type: "HIDDEN_FIELDS"`.
     2. Call `GET /v3/survey/peek?vyt=TOKEN` (with `Authorization: Bearer pk_val_FLOW_RAND`) to check the token.
     3. If `verified` is `false`, or the token is missing, call the Tally API to delete the submission immediately:
 
@@ -119,6 +121,8 @@ No wrapper page. Verification happens through a Tally hidden field, a logic rule
     DELETE https://api.tally.so/forms/FORM_ID/submissions/SUBMISSION_ID
     Authorization: Bearer YOUR_TALLY_API_KEY
     ```
+
+    A successful delete returns `204 No Content`.
 
     4. If `verified` is `true`, call `POST /v3/survey/consume?vyt=TOKEN` to burn it, then proceed with normal completion handling.
 

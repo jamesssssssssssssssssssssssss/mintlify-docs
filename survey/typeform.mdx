@@ -16,8 +16,8 @@ Typeform sits in the **soft gate** tier. The VerifyYou wrapper validates server-
 The respondent never touches the raw Typeform URL. You distribute the VerifyYou gated link.
 
 1. You set your **gated link** (`app.verifyyou.com/verification/<id>`) as the study URL in Prolific, MTurk, or wherever you recruit.
-2. The respondent does the ~20-second liveness check on VerifyYou.
-3. Verified? VerifyYou forwards them to your Typeform URL, appending `?vyt=TOKEN` and any pass-through params. Not verified? VerifyYou sends them to your screen-out URL — they never reach the survey.
+2. The respondent does the quick liveness and uniqueness check on VerifyYou.
+3. Verified? VerifyYou forwards them to your Typeform URL, appending `?vyt=TOKEN` and any pass-through params. Not verified? They return with `?vyc=0` and your wrapper (or return page) routes them to your screen-out URL — they never reach the survey.
 4. Inside Typeform, a logic jump checks that `vyt` is present and routes anyone without it to a disqualification end screen. This is browser-side hardening, not a server-side check — it closes the accidental-miss case, not a determined bypass.
 5. On submission, Typeform fires a webhook to your endpoint. You validate the token and delete the response via the Typeform Responses API if it is missing or invalid.
 
@@ -27,11 +27,11 @@ The token is a claim stub we mint and look up. It only matches if we made it, it
 
 <Steps>
   <Step title="Create your Verification and get your keys">
-    In the VerifyYou dashboard, go to **Verifications → Add verification** and choose the **Survey** preset (real + unique human, re-check every time, block duplicates).
+    In the VerifyYou dashboard, go to **Verifications → Add verification** to create a new Flow.
 
-    Set two redirects:
-    - **Verified → here**: your Typeform survey URL.
-    - **Rejected → here**: your recruitment platform's screen-out URL (e.g. your Prolific "screened out" completion link).
+    Set the **Redirect URL** — this is where verified respondents land. For Typeform, point it at your wrapper page (see the next step), not directly at the Typeform URL.
+
+    There is no failure-redirect field yet — it is on the build list. Today, a respondent who is not verified comes back to your return page with `?vyc=0` in the API flow, or lands on a VerifyYou end screen on the no-code link. Your wrapper (or return page) is what routes that screen-out to wherever you want it to go.
 
     From the verification's page, copy:
     - Your **gated link**: `app.verifyyou.com/verification/<id>` — this is what you distribute to respondents.
@@ -41,9 +41,15 @@ The token is a claim stub we mint and look up. It only matches if we made it, it
   </Step>
 
   <Step title="Pass the token into Typeform">
-    VerifyYou appends `?vyt=TOKEN` when forwarding a verified respondent to your survey URL. Typeform can capture this as a hidden field.
+    VerifyYou returns the token on your redirect URL as `?vyt=TOKEN`. This is where Typeform gets tricky: Typeform hidden fields on a **direct link** are read from the URL's hash fragment (`form.typeform.com/to/FORM_ID#vyt=TOKEN`), not a query string — query params work informally but Typeform does not document or guarantee them. And if you embed Typeform with the Embed SDK, the SDK **strips hash fragments entirely**; an embedded widget only receives hidden fields passed explicitly via `createWidget("FORM_ID", { hidden: { vyt: token } })` or `transitiveSearchParams`.
 
-    In Typeform, add a **Hidden field** named `vyt`. Typeform will auto-populate it from the URL parameter. This makes the token available to logic jumps and to your webhook payload.
+    The consequence: redirecting straight from VerifyYou into a Typeform URL with `?vyt=TOKEN` does not reliably populate the hidden field, on either a direct link or an embed. The wrapper page is not optional hardening here — it is the required hop. Your redirect URL should point at your own wrapper page, which:
+
+    1. Reads `?vyt=TOKEN` off its own URL (a plain query param on your domain, no Typeform quirks involved).
+    2. Peeks the token server-side to confirm it is valid before showing anything.
+    3. Either renders Typeform via `createWidget("FORM_ID", { hidden: { vyt: token } })` (embed) or forwards the browser to `form.typeform.com/to/FORM_ID#vyt=TOKEN` (direct link, hash fragment).
+
+    Either way, add a **Hidden field** named `vyt` in Typeform. With the token correctly passed via the SDK's `hidden` option or the hash fragment, it becomes available to logic jumps and to your webhook payload.
 
     Then add a **Logic Jump** at the very first question: if `vyt` **is empty** → jump to a disqualification end screen. This catches accidental drop-ins without a token. It does not block a respondent who has the Typeform URL and adds a plausible-looking parameter manually — that is what the webhook handles.
 
@@ -78,6 +84,8 @@ The token is a claim stub we mint and look up. It only matches if we made it, it
     { "included_response_ids": ["RESPONSE_ID"] }
     ```
 
+    Note that this delete is asynchronous: a `200` means Typeform has registered the deletion request, not that the response is already gone from your results. Do not treat the response as immediately deleted.
+
     Token valid? Accept the response, then burn the token once so it cannot be reused:
 
     ```http
@@ -93,11 +101,11 @@ The token is a claim stub we mint and look up. It only matches if we made it, it
   </Step>
 
   <Step title="Test end-to-end">
-    Use a VerifyYou test (sandbox) key. Walk the full flow: open your gated link, complete the liveness check, confirm you land in the Typeform survey with `?vyt=TOKEN` in the URL, submit, and confirm the response appears in Typeform and the webhook fires without deleting it.
+    Use Test (sandbox) mode in the VerifyYou dashboard. Walk the full flow: open your gated link, complete the liveness check, confirm you land on your wrapper page with `?vyt=TOKEN`, then confirm the wrapper correctly hands the token to Typeform (hidden field populated, either via the embed SDK or the `#vyt=TOKEN` hash fragment on a direct link), submit, and confirm the response appears in Typeform and the webhook fires without deleting it.
 
     Then try loading the raw Typeform URL with no `vyt` parameter and confirm the logic jump routes you to the disqualification screen. Finally, submit a response from a direct URL with a fake or already-burned token and confirm the webhook deletes it.
 
-    Use **"Clear test users"** in the VerifyYou dashboard to re-test uniqueness as a fresh respondent.
+    Use Test (sandbox) mode to re-run the whole check as many times as you need while you're building — switch to Live mode only once the flow is solid.
   </Step>
 </Steps>
 

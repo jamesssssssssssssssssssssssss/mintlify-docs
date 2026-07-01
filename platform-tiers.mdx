@@ -7,6 +7,10 @@ Every platform we support enforces the HumanCheck. The question is not whether a
 
 We organize platforms into three tiers based on that timing.
 
+<Note>
+Not ready to gate at all? Every platform also supports a passive option: run the HumanCheck as a mid-survey step and get a verified/not-verified column back to filter on after fielding. Zero platform work to set up, and it catches nothing in real time — bad respondents still complete and get paid. See [The screener](/the-screener) if that's where you want to start.
+</Note>
+
 ## The three tiers at a glance
 
 | Tier | When enforcement fires | What a bad respondent experiences |
@@ -27,7 +31,7 @@ The token is checked before the survey renders. A respondent who fails or skips 
 
 - **Qualtrics** using Invitation Only distribution with single-use personal links — the link is the token; once used it is gone
 - **Alchemer** using the Login/Password Action loaded with one-time passwords generated from the HumanCheck token — confirm with your Alchemer account whether the OTP burns on login-click or only on form completion, since the behavior differs by configuration
-- **MTurk** using a VerifyYou-issued custom Qualification — a true gate and the cheapest enforcement mechanism in the MTurk ecosystem
+- **MTurk** using a VerifyYou-issued custom Qualification — a true gate and the cheapest enforcement mechanism in the MTurk ecosystem; with `ActionsGuarded` set to `DiscoverPreviewAndAccept`, unqualified workers cannot take the HIT and, correctly configured, cannot even see it
 - **Any researcher-hosted wrapper page** that calls `GET /v3/survey/peek` and only renders the iframe or redirect when it receives `verified: true`
 
 <Tip>

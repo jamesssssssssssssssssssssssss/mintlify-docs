@@ -3,7 +3,7 @@ title: "Cint and Lucid (panel traffic)"
 description: "Integrate HumanCheck with Cint or Lucid panel traffic using S2S postbacks for webview-safe screenout signaling, with RID passthrough and per-complete billing."
 ---
 
-Panel traffic from Cint and Lucid arrives through in-app webviews on mobile. That matters for one reason: browser redirects do not work reliably there. A disposition URL you paste into a "failure redirect" field may fire cleanly in a desktop browser and silently vanish inside a Facebook or Instagram webview. The reliable path is a **Server-to-Server (S2S) postback**: your server calls Cint's or Lucid's update endpoint directly the moment you know the outcome, no browser needed.
+Panel traffic from Cint and Lucid often arrives through in-app webviews on mobile, and webviews can be an unreliable place to depend on a browser redirect alone — a disposition URL may fire cleanly in a desktop browser but silently fail to fire on some in-app webviews. That's a general mobile engineering reality, not something unique to any one panel. It's why Cint recommends S2S or callback postbacks for panel and community entry links: redirects alone can fail or be manipulated. The reliable path is a **Server-to-Server (S2S) postback**: your server calls Cint's or Lucid's update endpoint directly the moment you know the outcome, alongside the redirect, as the authoritative disposition report.
 
 HumanCheck slots in between the panel entry link and your survey. It runs liveness first — is a real, live person present right now? — then uniqueness: have we seen this face before? Respondents who pass both carry a token forward. Respondents who fail get a screenout signal sent from your server, not from their phone.
 
@@ -43,7 +43,7 @@ The panel generates an entry link with a `RID` placeholder — Cint uses `[%RID%
   </Step>
 
   <Step title="Respondent completes the liveness check">
-    The respondent does the ~20-second liveness selfie at `app.verifyyou.com/v/SESSION`. We run liveness first, then uniqueness. On finish, they return to `origin + return_path` carrying:
+    The respondent does the quick liveness selfie at `app.verifyyou.com/v/SESSION`. We run liveness first, then uniqueness. On finish, they return to `origin + return_path` carrying:
 
     - `?vyt=TOKEN` — the single-use verification token
     - `vyc=1` (verified) or `vyc=0` (not verified) — a UI hint only; confirm server-side
@@ -69,13 +69,21 @@ The panel generates an entry link with a `RID` placeholder — Cint uses `[%RID%
   </Step>
 
   <Step title="Report screenouts via S2S postback">
-    For every respondent who did not pass, call the panel's S2S update endpoint from your server. Do not use a browser redirect — it will not fire reliably in webviews.
+    For every respondent who did not pass, call the panel's S2S update endpoint from your server. This runs alongside the browser redirect, as the authoritative disposition report — Cint's docs describe the redirect continuing for session continuity while S2S carries the outcome that actually counts.
 
-    Cint S2S endpoint (confirm the exact URL with your Cint account team; it is study-specific):
+    Cint S2S endpoint — the RID goes in the JSON request body, not the URL path:
 
     ```
-    GET https://[cint-s2s-endpoint]?rid={RID}&disposition=terminate
+    POST https://s2s.cint.com/fulfillment/respondents/transition
+    Content-Type: application/json
+
+    {
+      "rid": "{RID}",
+      "disposition_code": 2
+    }
     ```
+
+    Disposition codes: `5` = complete, `2` = screenout, `3` = quota full, `4` = quality termination.
 
     Lucid S2S endpoint:
 
@@ -100,15 +108,15 @@ The panel generates an entry link with a `RID` placeholder — Cint uses `[%RID%
   </Step>
 </Steps>
 
-## Why browser redirects fail here
+## Why S2S runs alongside the redirect
 
-Panel respondents on mobile often arrive inside a social-app webview — Facebook, Instagram, TikTok. Those webviews can:
+Panel respondents on mobile often arrive inside a social-app webview — Facebook, Instagram, TikTok. Those webviews can, as a general matter of mobile engineering, sometimes:
 
 - Swallow a 3xx redirect silently
 - Close before the redirect fires
 - Block cross-origin navigation in certain states
 
-A server-to-server postback bypasses the browser entirely. Your server fires the signal to Cint or Lucid the moment you know the outcome, independent of what the respondent's device does next. The same logic applies to peeking and consuming tokens: confirm outcomes on your server, not from client-side behavior.
+That's why Cint recommends S2S or callback postbacks for panel and community entry links: redirects alone can fail or be manipulated. S2S does not replace the browser redirect — the redirect still runs for session continuity — but the server-to-server postback is the authoritative disposition report, independent of what the respondent's device does next. The same logic applies to peeking and consuming tokens: confirm outcomes on your server, not from client-side behavior.
 
 ## The RID all the way through
 
@@ -137,7 +145,7 @@ https://yoursurvey.com/s/STUDYID?vyt=TOKEN&RID=abc123
     Forward the respondent to the survey immediately; your survey platform's webhook calls `peek` on submit and deletes bad responses via the platform API. Respondents enter but bad responses never reach your dataset or count as completes.
   </Card>
   <Card title="S2S postback for screenouts" icon="server">
-    Report terminates from your server, not from the browser. Reliable in webviews where redirects silently fail. Terminates are free — only completes draw quota.
+    Report terminates from your server as the authoritative signal, alongside the browser redirect. Reliable even when webviews cause a redirect to fail. Terminates are free — only completes draw quota.
   </Card>
   <Card title="Honest catch: mid-flow drops" icon="triangle-exclamation">
     If a respondent closes the webview during the liveness check itself, no return signal reaches your server and you have no outcome. This is not unique to HumanCheck — any mid-flow drop is invisible to the panel until a S2S signal arrives. Consider session timeouts if Cint or Lucid requires a disposition on every entry.

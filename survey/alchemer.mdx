@@ -11,7 +11,7 @@ The screener criterion you are adding is: real, unique, live human. A HumanCheck
 
 ## How the two legs connect
 
-The respondent completes the ~20-second liveness and uniqueness check and lands back on your return URL with `?vyt=TOKEN&vyc=1` appended automatically. That return URL points at your Alchemer survey. A thin entry page or redirect reads `vyt` and pre-fills the Login/Password field. Alchemer checks the token against your pre-loaded list. Valid and unused: the survey opens. Anything else: blocked.
+The respondent completes the quick liveness and uniqueness check and lands back on your return URL with `?vyt=TOKEN&vyc=1` appended automatically. That return URL points at your Alchemer survey. A thin entry page or redirect reads `vyt` and pre-fills the Login/Password field. Alchemer checks the token against your pre-loaded list. Valid and unused: the survey opens. Anything else: blocked.
 
 Your survey question flow is untouched. Enforcement lives entirely in the access layer.
 

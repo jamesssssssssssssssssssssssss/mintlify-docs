@@ -8,7 +8,7 @@ Google Forms is not capture-only. With a one-time Apps Script setup, every submi
 There is a brief window between submission and deletion, but in practice bad responses rarely survive long enough to appear in a linked spreadsheet.
 
 <Note>
-The installable Apps Script trigger in Step 4 is the real enforcement layer. The response-validation regex in Step 3 is client-side only and can be bypassed by anyone who knows what they are doing. Do not skip Step 4.
+The installable Apps Script trigger in Step 4 is the real enforcement layer. The response-validation regex in Step 3 is a browser-side UI convenience, not enforcement — it only blocks the rendered form's submit button. A direct POST or a crafted prefill submission bypasses it entirely. Do not skip Step 4.
 </Note>
 
 ## Why a redirect page is needed
@@ -80,7 +80,7 @@ Host this page anywhere reachable — a simple Vercel deployment, a GitHub Pages
     This rejects a completely blank or obviously malformed value at the browser, before the form submits. It catches bad redirect wiring early and keeps junk out of the queue for the trigger to clean up.
 
     <Warning>
-    This regex does not call VerifyYou. A respondent could type any string matching the pattern and pass the browser check. The Apps Script trigger in Step 4 is where real validation happens — do not skip it.
+    This regex does not call VerifyYou, and it is a UI-layer convenience, never enforcement. It only blocks the rendered form's submit button in a browser. A direct POST to Google's form-response endpoint, or a crafted prefill submission, bypasses it entirely — the request never touches this validation rule. The Apps Script trigger in Step 4 is where real enforcement happens — do not skip it.
     </Warning>
   </Step>
 
@@ -149,6 +149,8 @@ Host this page anywhere reachable — a simple Vercel deployment, a GitHub Pages
 
     The installable trigger runs with your Google account's permissions. That is what grants it access to `deleteResponse`. The simple `onSubmit` trigger does not have that permission and will silently fail to delete anything.
 
+    Each submission triggers one `UrlFetchApp` call and finishes well inside Apps Script's limits — 20,000 URL Fetch calls per day on a personal Google account (100,000 on Google Workspace) and a 6-minute cap per trigger execution — far more headroom than any realistic study needs.
+
     <Info>
     `peek` is idempotent — it does not burn the token. If you also process submissions from a linked spreadsheet or a second Apps Script, you can call `peek` again safely. Call `consume` exactly once, when you are ready to mark the response as final and prevent any further use of that token.
     </Info>
@@ -157,7 +159,7 @@ Host this page anywhere reachable — a simple Vercel deployment, a GitHub Pages
 
 ## What each side ends up with
 
-A respondent without a valid token cannot leave a lasting response. The trigger fires on every submission, calls `peek` against the VerifyYou validation endpoint, and calls `deleteResponse` on anything that fails. From your spreadsheet's point of view, bad submissions either never appear or are gone within seconds of landing. You get a clean dataset — every row a real, unique, live human — without touching the responses manually.
+A respondent without a valid token cannot leave a lasting response. The trigger fires on every submission, calls `peek` against the VerifyYou validation endpoint, and calls `deleteResponse` on that one response if it fails — `deleteResponse` takes a single response ID per call, so each bad submission is removed individually as it comes in, not swept up later in a batch. From your spreadsheet's point of view, bad submissions either never appear or are gone within seconds of landing. You get a clean dataset — every row a real, unique, live human — without touching the responses manually.
 
 If you think of your screener as the list of criteria a respondent must pass before their answer counts, the HumanCheck is one more criterion on that list. The trigger enforces it automatically. It does not replace your other screener questions; it sits alongside them.
 
@@ -173,7 +175,7 @@ This is the same enforcement tier as the Tally and Jotform webhook flows — sof
     There is a brief window between submission and deletion where the response technically exists. It will not appear in exports if deletion is prompt, but this is not a true gate — no question is blocked before it loads. If you need zero exposure, use a Qualtrics personal link or an Alchemer login action instead. See [/choosing-your-flow](/choosing-your-flow).
   </Card>
   <Card title="Apps Script quota" icon="clock">
-    Google Apps Script has a daily URL Fetch quota — roughly 20,000 calls on most plans. High-volume studies should check their quota under Quotas in the Apps Script dashboard. For very large studies, a true-gate platform is more reliable and removes the quota concern entirely.
+    Google Apps Script caps `UrlFetchApp` calls at 20,000/day on a personal Google account, 100,000/day on Google Workspace, with a 6-minute limit per trigger execution. That is far above any realistic study volume, but very high-volume studies should check their usage under Quotas in the Apps Script dashboard. For very large studies, a true-gate platform is more reliable and removes the quota concern entirely.
   </Card>
   <Card title="No failure redirect yet" icon="arrow-right-arrow-left">
     VerifyYou does not yet have a built-in failure redirect. Respondents who do not pass the liveness check return to your redirect page with `vyc=0` and a token that will not validate. The Apps Script trigger handles this correctly — it deletes the response — but the respondent experience after a failed check depends on how your recruitment platform handles a screen-out.

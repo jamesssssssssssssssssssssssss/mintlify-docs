@@ -1,12 +1,12 @@
 ---
 title: "SurveyMonkey"
-description: "SurveyMonkey can do more than log a token for later: Advanced Branching (Premier) reads a custom variable on page 1 and disqualifies on the first page turn, before your question blocks render, paired with a response_completed webhook that deletes anything that slips through."
+description: "SurveyMonkey can do more than log a token for later: Advanced Branching (Premier, Team Premier, and Enterprise plans) reads a custom variable on page 1 and disqualifies on the first page turn, before your question blocks render, paired with a response_completed webhook that deletes anything that slips through."
 ---
 
-SurveyMonkey is not capture-only. With **Advanced Branching** — a Premier-plan feature, distinct from basic skip logic — you can read a custom variable on page 1 and disqualify a respondent on the first page turn, before your question blocks render. Pair that with a `response_completed` webhook and a Response DELETE, and bad tokens never become counted, paid completes. The page-1 branch is your soft gate. The webhook delete is the backstop.
+SurveyMonkey is not capture-only. With **Advanced Branching** — available on Premier, Team Premier, and Enterprise plans, distinct from basic skip logic — you can read a custom variable on page 1 and disqualify a respondent on the first page turn, before your question blocks render. Pair that with a `response_completed` webhook and a Response DELETE, and bad tokens never become counted, paid completes. The page-1 branch is your soft gate. The webhook delete is the backstop.
 
 <Note>
-Advanced Branching and basic skip logic are not the same thing. Basic skip logic cannot read custom variables. Advanced Branching can, and it is required for the page-1 screen-out described here. Advanced Branching is a Premier plan feature.
+Advanced Branching and basic skip logic are not the same thing. Basic skip logic cannot read custom variables. Advanced Branching can, and it is required for the page-1 screen-out described here. Advanced Branching is available on Premier, Team Premier, and Enterprise plans.
 </Note>
 
 ## How it works
@@ -33,7 +33,9 @@ There is no failure redirect in the dashboard yet. Respondents who fail liveness
 </Step>
 
 <Step title="Add the vyt custom variable">
-In your survey's **Custom Variables** settings, add a variable named `vyt`. SurveyMonkey populates it automatically from the `?vyt=` query parameter when a respondent lands on your collector URL. No visible field is required. It travels as a hidden collector variable.
+In your survey's **Custom Variables** settings, add a variable named `vyt`. Custom variables only work with the **Web Link collector** — if your collector is email, or another type, this approach does not apply. You can have up to 100 custom variables per survey.
+
+SurveyMonkey does not populate the variable itself: the value is passed on the survey URL as a query parameter (`?vyt=TOKEN`), which your return URL carries from the VerifyYou redirect. No visible field is required. It travels as a hidden collector variable.
 </Step>
 
 <Step title="Add Advanced Branching on page 1">
@@ -45,7 +47,7 @@ On page 1 of your survey, before any question block, add an Advanced Branching r
 Anyone who navigates directly to the survey URL — or arrives from a source that skipped the HumanCheck — hits this branch immediately. No questions are served.
 
 <Warning>
-Basic skip logic cannot read custom variables. If you are not on a Premier plan, the page-1 branch is unavailable, and respondents can see and answer questions before the webhook removes their response. If you need a true pre-content gate without a plan upgrade, see [Qualtrics](/survey/qualtrics) or [Alchemer](/survey/alchemer).
+Basic skip logic cannot read custom variables. If you are not on Premier, Team Premier, or Enterprise, the page-1 branch is unavailable, and respondents can see and answer questions before the webhook removes their response. If you need a true pre-content gate without a plan upgrade, see [Qualtrics](/survey/qualtrics) or [Alchemer](/survey/alchemer).
 </Warning>
 </Step>
 
@@ -56,7 +58,7 @@ When the event arrives:
 
 1. Extract the response ID and the `vyt` custom variable value from the payload.
 2. Call `GET /v3/survey/peek?vyt=TOKEN` with your `pk_val_` key in the `Authorization: Bearer` header.
-3. If `verified` is `false` or the token is missing, call `DELETE /surveys/{survey_id}/responses/{response_id}` on the SurveyMonkey API to remove the response.
+3. If `verified` is `false` or the token is missing, call `DELETE /v3/surveys/{survey_id}/responses/{response_id}` on the SurveyMonkey API to remove the response.
 4. If `verified` is `true`, call `POST /v3/survey/consume?vyt=TOKEN` to burn the token and record the final completion.
 
 ```http
@@ -75,6 +77,10 @@ Authorization: Bearer YOUR_SM_ACCESS_TOKEN
 
 <Note>
 `peek` is idempotent and does not burn the token. `consume` burns it exactly once. Call `consume` on a verified response to mark the completion and prevent token reuse after the TTL window expires.
+</Note>
+
+<Note>
+The DELETE endpoint requires your public app to hold the **Create/Modify Responses** OAuth scope. API access itself is plan-gated by SurveyMonkey, but this endpoint carries no additional gating beyond that scope.
 </Note>
 </Step>
 
@@ -103,8 +109,8 @@ Your return page at `origin + return_path` receives `?vyt=TOKEN&PROLIFIC_PID=...
 
 <CardGroup cols={2}>
 
-<Card title="Soft gate (Premier)" icon="shield-halved">
-Advanced Branching reads the `vyt` variable on page 1 and disqualifies before any question loads. Requires a Premier plan. This is the recommended setup.
+<Card title="Soft gate (Premier, Team Premier, Enterprise)" icon="shield-halved">
+Advanced Branching reads the `vyt` variable on page 1 and disqualifies before any question loads. Requires Premier, Team Premier, or Enterprise. This is the recommended setup.
 </Card>
 
 <Card title="Webhook backstop (all plans)" icon="rotate">
@@ -116,14 +122,14 @@ Repeat takers are stopped at the uniqueness layer. The same face cannot earn a s
 </Card>
 
 <Card title="The honest catch" icon="triangle-exclamation">
-The page-1 branch checks whether `vyt` is present, not whether it is genuinely valid. Full token validation happens in the webhook. Without Premier, the webhook is your only enforcement line.
+The page-1 branch checks whether `vyt` is present, not whether it is genuinely valid. Full token validation happens in the webhook. Without Premier, Team Premier, or Enterprise, the webhook is your only enforcement line.
 </Card>
 
 </CardGroup>
 
 ## Trade-offs at a glance
 
-| | Premier + Advanced Branching | Without Premier |
+| | Premier / Team Premier / Enterprise + Advanced Branching | Without those plans |
 |---|---|---|
 | Questions visible before rejection | No | Yes (webhook deletes after) |
 | Respondent sees disqualify screen | Immediately on page 1 | After submitting |
@@ -135,7 +141,7 @@ The page-1 branch checks whether `vyt` is present, not whether it is genuinely v
 <AccordionGroup>
 
 <Accordion title="Is SurveyMonkey capture-only?">
-No — that is the common misread. Basic skip logic is capture-only because it cannot read custom variables. Advanced Branching (Premier) can, and it disqualifies on page 1 before any question renders. That is not capture-only; that is a soft gate. The webhook DELETE is then a backstop, not the primary mechanism.
+No — that is the common misread. Basic skip logic is capture-only because it cannot read custom variables. Advanced Branching (Premier, Team Premier, and Enterprise plans) can, and it disqualifies on page 1 before any question renders. That is not capture-only; that is a soft gate. The webhook DELETE is then a backstop, not the primary mechanism.
 </Accordion>
 
 <Accordion title="What if a respondent shares their token URL with someone else?">
@@ -143,7 +149,7 @@ The token has a short TTL (~30 minutes) and is minted per unique face. Within th
 </Accordion>
 
 <Accordion title="Can I use this without a Premier plan?">
-Yes, but with a degraded experience. The webhook-and-delete backstop works on all plans. Respondents will see your questions before their response is removed. If that exposure is a problem — either for data integrity or for respondent experience — upgrade to Premier or use a platform that gates at entry without a plan requirement: [Qualtrics](/survey/qualtrics) via single-use personal links, or [Alchemer](/survey/alchemer) via one-time passwords.
+Yes, but with a degraded experience. The webhook-and-delete backstop works on all plans. Respondents will see your questions before their response is removed. If that exposure is a problem — either for data integrity or for respondent experience — upgrade to Premier, Team Premier, or Enterprise, or use a platform that gates at entry without a plan requirement: [Qualtrics](/survey/qualtrics) via single-use personal links, or [Alchemer](/survey/alchemer) via one-time passwords.
 </Accordion>
 
 <Accordion title="Does the webhook fire on a disqualified (branched-out) respondent?">

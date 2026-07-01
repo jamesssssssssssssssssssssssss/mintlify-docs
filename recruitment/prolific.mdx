@@ -9,6 +9,10 @@ Prolific is one of the cleanest recruitment legs to wire up. Paste our gated lin
   Enable **Secure External URL** for any real study. Without it, anyone who knows your gated link can attempt the check directly — bypassing Prolific's participant pool entirely.
 </Warning>
 
+<Warning>
+  Prolific requires prior written approval for any study that collects data that could identify a participant. A face-scan step likely falls under that rule. Message Prolific support for approval before fielding a HumanCheck study — do this before you launch, not after.
+</Warning>
+
 ## How it works
 
 Prolific sends participants to our hosted check at `app.verifyyou.com/v/SESSION`. We run liveness (a live person present now) and uniqueness (are they new?). Pass: we return them to your survey with `?vyt=TOKEN&vyc=1` appended, plus whatever you put in `pass_params`, including `PROLIFIC_PID`. Fail or decline: the participant returns to your configured return URL with `vyc=0`. Your return page reads `vyc` and routes failures to the Prolific screen-out completion URL.
@@ -55,19 +59,19 @@ The two legs never touch. Prolific knows nothing about the check. Your survey kn
 
     Or handle this server-side in a wrapper you control before the survey loads.
 
-    Prolific charges a researcher-set fee per screen-out, with a floor around $0.14. That sounds like a cost. It is not. A single bad complete on a $3–$7 consumer panel wastes $12–$15 in analyst time to find and clean. A screen-out that costs $0.14 and keeps the bad respondent out is the better trade every time.
+    Prolific requires a fixed screen-out reward set at study creation — a minimum of GBP 0.10 (about $0.14) for screening paths of one minute or less, and it cannot be changed after launch. That sounds like a cost. It is not. A single bad complete on a $3–$7 consumer panel wastes $12–$15 in analyst time to find and clean. A screen-out that costs about $0.14 and keeps the bad respondent out is the better trade every time.
   </Step>
 
   <Step title="Paste the gated link as the External Study URL">
     In your Prolific study settings, under **How will you collect your data?**, choose **I'll use my own survey tool** and paste the gated link as the **External Study URL**.
 
-    Prolific appends its own parameters automatically — `PROLIFIC_PID`, `STUDY_ID`, `SESSION_ID`. Our check carries those forward through the flow via `pass_params`.
+    Include the `{{%PROLIFIC_PID%}}` placeholder in the study URL (and optionally `{{%STUDY_ID%}}` and `{{%SESSION_ID%}}`) — Prolific substitutes the real values when it sends the participant. Our check carries those forward through the flow via `pass_params`.
   </Step>
 
   <Step title="Enable Secure External URL">
-    In your Prolific study settings, turn on **Secure External URL**. Prolific then signs the entry parameters as a short-lived RS256 JWT (roughly two minutes expiry). VerifyYou verifies that signature at entry against Prolific's public keys at `api.prolific.com/.well-known/study/jwks.json`.
+    In your Prolific study settings, turn on **Secure External URL**. Prolific then appends a `prolific_token` URL parameter containing an RS256 JWT that expires about two minutes after issue. VerifyYou verifies that token's signature at entry against Prolific's published keys at `https://api.prolific.com/.well-known/study/jwks.json`.
 
-    The effect: anyone who reaches your gated link without coming through Prolific is blocked before the liveness check even runs. You flip the toggle; we handle the signature verification.
+    The effect: anyone who reaches your gated link without coming through Prolific is blocked before the liveness check even runs. You flip the toggle; VerifyYou verifies the signature at entry.
   </Step>
 
   <Step title="Enforce the token in your survey">
@@ -96,11 +100,11 @@ The two legs never touch. Prolific knows nothing about the check. Your survey kn
   </Step>
 </Steps>
 
-## Optional: automated request returns via webhook
+## Optional: catching edge cases with a webhook
 
-Configure a `response.submitted` webhook on your survey platform if you want edge cases handled without touching anything. When a completion arrives with an invalid or missing token, the webhook can call Prolific's API and issue an automated **REQUEST RETURN** for that participant rather than approving them.
+Configure a `response.submitted` webhook on your survey platform if you want a cleanup layer for timing edge cases. Prolific webhooks are outbound notifications only — there is no API to force a return. When a completion arrives with an invalid or missing token, the webhook can alert you so you can send that participant a **Request Return** in Prolific. A return is a request the participant accepts voluntarily; it is not something you or the webhook can trigger automatically.
 
-This is optional. The gate already blocks invalid respondents from completing. The webhook is a cleanup layer for timing edge cases, not the main line of defense.
+This is optional. The gate already blocks invalid respondents from completing. The webhook just flags timing edge cases for you to follow up on, not the main line of defense.
 
 ## Trade-offs
 
@@ -112,7 +116,7 @@ This is optional. The gate already blocks invalid respondents from completing. T
     Low to medium. Paste a link, handle the `vyc=0` branch, flip one toggle. Token enforcement on the survey leg adds a step, but most researchers are through it in under an hour.
   </Card>
   <Card title="Cost of a screen-out" icon="circle-dollar-to-slot">
-    Researcher-set floor around $0.14 per screen-out. Compare that to $12–$15 in wasted sample spend per bad complete that gets through. The gate pays for itself quickly.
+    Fixed reward set at study creation, minimum GBP 0.10 (about $0.14) for screening paths of one minute or less, and it cannot change after launch. Compare that to $12–$15 in wasted sample spend per bad complete that gets through. The gate pays for itself quickly.
   </Card>
   <Card title="Best for" icon="bullseye">
     Academic researchers who need clean participant mapping via PID, fast study turnaround, and a direct cost incentive to keep repeat-takers and bad actors out.

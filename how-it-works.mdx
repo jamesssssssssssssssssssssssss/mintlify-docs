@@ -1,6 +1,6 @@
 ---
 title: "How the check works"
-description: "A gated link, a twenty-second face scan that proves a real, unique, live human, and a claim ticket your survey confirms in one call \u2014 all without touching your platform."
+description: "A gated link, a quick face scan that proves a real, unique, live human, and a claim ticket your survey confirms in one call \u2014 all without touching your platform."
 ---
 
 There is one moving part. A respondent passes through a HumanCheck before they reach your survey, and out the other side comes a token: a claim ticket only we can mint, that works once, and that the same face cannot earn twice. Drop it in front of any survey. Your survey only ever sees a yes or no.
@@ -15,13 +15,13 @@ Nothing about your platform has to change. The check runs on our side, the respo
 
     Key parameters: `verification_id` or `verification_external_id`, `origin`, `return_path`, `pass_params` (carries your participant identifiers — a `PROLIFIC_PID`, an `RID` — back on the return URL so your survey reads them without asking again), and optionally `start_path` and `external_tracker` (echoed on webhooks only, not on the return URL).
   </Step>
-  <Step title="The respondent does a ~20-second face scan">
+  <Step title="The respondent does a quick face scan">
     Two checks run back to back on our side, invisible to you and to your survey tool.
 
     - **Liveness** — is a live person present right now, or is this a replay, a printed photo, a mask, or a generated face? This is the humanness check.
     - **Uniqueness** — have we seen this exact face before in this study? A **collision** means we refuse to mint a second token, no matter how clean the second attempt looks.
 
-    The respondent never leaves the hosted flow at `app.verifyyou.com` until both checks are done. Seconds, a camera, no documents.
+    The scan itself takes a few seconds; the whole flow is typically well under a minute. Starting on a desktop? We hand the session to their phone with a QR code and bring them back automatically. The respondent never leaves the hosted flow at `app.verifyyou.com` until both checks are done. Seconds, a camera, no documents.
   </Step>
   <Step title="We route on the result">
     **Verified.** We send the respondent back to your `origin + return_path` with `?vyt=TOKEN&vyc=1` appended. `vyt` is the single-use token we just minted. `vyc=1` is a UI hint only, not proof; confirm it server-side.
@@ -59,7 +59,7 @@ The point of the whole exchange is an asymmetry: we take on the face, and your s
 
 | The respondent | Your study |
 | --- | --- |
-| Twenty-odd seconds and a face scan | A verdict: real, unique, live human |
+| A few seconds and a face scan | A verdict: real, unique, live human |
 | No documents, no ID upload | A stable id for that human, nothing more |
 | Recognized on return, often with zero friction | Never a face, a name, or an image |
 | One check, then straight into the survey | One confirmation call, then a clean complete |
