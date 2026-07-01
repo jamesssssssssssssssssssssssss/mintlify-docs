@@ -1,0 +1,137 @@
+---
+title: "Formspark"
+description: "Gate your Formspark form with a VerifyYou token check before any response is ever saved, giving you a true entry gate without needing a management API."
+---
+
+Formspark gives you a plain HTML form you host on your own page. That is actually the best possible architecture for VerifyYou: you can run a token check in JavaScript *before* calling `fetch` to submit, so a bad respondent is blocked before the response is ever saved. There is no Formspark management API to delete bad submissions after the fact, but you do not need one.
+
+<CardGroup cols={2}>
+  <Card title="Enforcement tier" icon="shield-check">
+    **Direct-call true gate.** The token is checked before the form submits. A bad ticket never becomes a saved response.
+  </Card>
+  <Card title="What you need" icon="list-check">
+    A VerifyYou Flow with a publishable validation key (`pk_val_...`), a Formspark form ID, and a page you control to host the HTML.
+  </Card>
+</CardGroup>
+
+## How it works
+
+The respondent arrives on your page carrying `?vyt=TOKEN` in the URL, placed there by the VerifyYou check in the recruitment leg. Your submit listener intercepts the form, calls our PEEK endpoint to verify the token, and only allows the native submit if the check passes. The token is never consumed by the PEEK call, so you can also record it in the submission for audit purposes.
+
+<Note>
+  Because the check runs in the browser, anyone sufficiently determined could disable JavaScript and bypass the listener. For studies where that matters, pair this with a server-side re-check of the token against your own backend before you accept the data as final. For most survey research contexts the friction of bypassing is enough deterrence, especially combined with the uniqueness guarantee.
+</Note>
+
+## Setup
+
+<Steps>
+  <Step title="Create a Flow and copy your validation key">
+    In the VerifyYou dashboard, create or open a Flow for this study. Under **API Keys**, copy the per-Flow publishable validation key. It starts with `pk_val_`. This key can check tokens but cannot create anything or access any PII, so it is safe to include in client-side code.
+  </Step>
+
+  <Step title="Get your Formspark embed code">
+    In your Formspark dashboard, copy the HTML embed snippet for your form. It will contain an `action` pointing to `https://submit-form.com/YOUR_FORM_ID`. Host this on any HTML page you control, whether a static file, a GitHub Pages site, or a simple web host.
+  </Step>
+
+  <Step title="Add the token to your recruitment link">
+    When you send respondents into the VerifyYou check, set `return_path` to the path of your Formspark page and include your participant ID variable in `pass_params`. For example:
+
+    ```json
+    {
+      "verification_id": "flow_abc123",
+      "origin": "https://your-survey-page.com",
+      "return_path": "/form",
+      "pass_params": "RID"
+    }
+    ```
+
+    After the liveness check, VerifyYou returns the respondent to `https://your-survey-page.com/form?vyt=TOKEN&vyc=1&RID=THEIR_ID`. Your form page reads `vyt` from the URL.
+  </Step>
+
+  <Step title="Add the submit listener">
+    Paste this script into your form page. Replace `pk_val_YOUR_KEY` with your actual validation key and `/screenout` with wherever rejected respondents should land.
+
+    ```html
+    <script>
+      document.querySelector('form').addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        const params = new URLSearchParams(window.location.search);
+        const vyt = params.get('vyt');
+
+        if (!vyt) {
+          window.location.href = '/screenout';
+          return;
+        }
+
+        const res = await fetch(
+          `https://app.verifyyou.com/v3/survey/peek?vyt=${encodeURIComponent(vyt)}`,
+          {
+            headers: {
+              Authorization: 'Bearer pk_val_YOUR_KEY'
+            }
+          }
+        );
+
+        const data = await res.json();
+
+        if (!data.verified) {
+          window.location.href = '/screenout';
+          return;
+        }
+
+        // Token is valid. Allow the form to submit normally.
+        e.target.submit();
+      });
+    </script>
+    ```
+
+    The PEEK endpoint (`GET /v3/survey/peek?vyt=TOKEN`) is idempotent and does not burn the token, so calling it here does not prevent a later re-check from a webhook or backend.
+  </Step>
+
+  <Step title="Record the token in the submission (optional but recommended)">
+    Add a hidden field to your form so every accepted submission carries the token for audit or re-verification later:
+
+    ```html
+    <input type="hidden" name="vyt" id="vyt-field" />
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      document.getElementById('vyt-field').value = params.get('vyt') || '';
+    </script>
+    ```
+
+    You can also use the [Formspark formtrack script](https://documentation.formspark.io/setup/script.html) with `data-formtrack-params="vyt"` to capture URL parameters automatically without a hidden field.
+  </Step>
+</Steps>
+
+## Trade-offs
+
+<CardGroup cols={2}>
+  <Card title="No management API needed" icon="circle-check">
+    Because the check runs before submit, a bad respondent never produces a saved response. You do not need to poll or delete entries after the fact.
+  </Card>
+  <Card title="Client-side check" icon="triangle-exclamation">
+    A technically sophisticated respondent could disable JavaScript and bypass the listener. For high-stakes studies, add a server-side re-check of the recorded `vyt` value before treating a response as final.
+  </Card>
+  <Card title="Works on any host" icon="globe">
+    Formspark forms are plain HTML. You can host your gate page on GitHub Pages, Netlify, a static S3 bucket, or anywhere that serves HTML.
+  </Card>
+  <Card title="Screen-out redirect is yours to build" icon="arrow-right-arrow-left">
+    VerifyYou does not yet provide a platform-level failure redirect. Your `window.location.href = '/screenout'` in the listener is the current pattern. When a dashboard-level failure redirect ships, you can remove that branch.
+  </Card>
+</CardGroup>
+
+## Token security notes
+
+The token (`vyt`) is a single-use claim ticket minted by VerifyYou and stored hashed in our database. It is bound to one Flow, carries a roughly 30-minute TTL, and is rate-limited against enumeration. When your listener calls PEEK, we check: is this token real (we minted it), for this Flow, and unexpired? A respondent cannot guess a valid token and cannot earn a second one because the uniqueness check blocks the same face from passing again.
+
+<Warning>
+  Never skip the `Authorization` header on PEEK calls. A completely unauthenticated endpoint would allow a bad actor to burn tokens they do not own (denial-of-service) and probe which token strings are valid (enumeration oracle). The `pk_val_` key carries no PII and cannot create anything, so it is safe in client-side code.
+</Warning>
+
+## Related pages
+
+- [Choosing your flow](/choosing-your-flow) for the two-leg mental model
+- [Recruitment: Prolific](/recruitment/prolific) if Prolific is your recruitment leg
+- [Survey: Qualtrics](/survey/qualtrics) for a platform with a native true gate option
+- [Survey: Typeform](/survey/typeform) for the soft-gate plus webhook pattern

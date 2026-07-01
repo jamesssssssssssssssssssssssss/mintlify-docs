@@ -1,0 +1,87 @@
+---
+title: "How it works"
+description: "One primitive, two layers: a single-use token bound to one unique human, validated server-side, that you drop in front of any survey or action without touching the underlying platform."
+---
+
+VerifyYou adds one primitive to any research flow: a **single-use token bound to one unique human**, validated server-side by us. You place a gated link between your recruitment source and your survey. Respondents pass through a ~20-second check. What comes out the other side is a token that only we can mint, only works once, and cannot be earned a second time by the same face.
+
+## The flow
+
+<Steps>
+  <Step title="You create a gated link">
+    You call `POST /v3/initialize` (or use a no-code share link from the dashboard) and give us a return path, your survey URL, and any participant identifiers you want carried through. We give you back a URL that looks like `app.verifyyou.com/v/SESSION`. That is the link you paste into your screener, your recruitment ad, or your invitation email.
+  </Step>
+  <Step title="The respondent does a ~20-second liveness selfie">
+    We run two checks back-to-back on our side, invisible to you and your platform:
+
+    - **Liveness** — is this a real human in front of a camera right now, or a replay, deepfake, or printed photo?
+    - **Uniqueness** — have we seen this exact face before in this study? If yes, we refuse to mint a second token regardless of how the second attempt looks.
+
+    The respondent never leaves our hosted flow at `app.verifyyou.com` until both checks are done.
+  </Step>
+  <Step title="We route them based on the result">
+    **Verified:** we redirect to your `origin + return_path` with `?vyt=TOKEN&vyc=1` appended. The token is a one-time opaque string we just minted and recorded in our database. Any `pass_params` you included (for example `PROLIFIC_PID` or `RID`) are also appended so your survey or wrapper page can read them without asking again.
+
+    **Not verified** (bot, deepfake, duplicate face, or declined): we return the respondent to the same `origin + return_path` with `?vyc=0`. Your return page reads `vyc=0` and sends them on to your recruitment platform's screen-out or disqualification URL.
+
+    <Note>
+      A dedicated failure redirect (where we forward non-verified respondents straight to a screen-out URL for you) does not exist yet. It is on the build list. Until it ships, handle `vyc=0` on your own return page and route the screen-out from there.
+    </Note>
+  </Step>
+  <Step title="The destination confirms the token">
+    When a response arrives at your survey or your webhook, you (or your platform, or your own server) call:
+
+    ```http
+    GET /v3/survey/peek?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    We return `{ "verified": true, "reason": "ok" }` or `{ "verified": false, "reason": "..." }`. This call is idempotent and does not burn the token, so you can call it at entry and again from a webhook. Once you are ready to accept the response as a real completion, you burn it:
+
+    ```http
+    POST /v3/survey/consume?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    We return `{ "consumed": true }`. After that the token is spent and will not validate again.
+
+    The key in the `Authorization` header is a per-Flow **publishable validation key** (`pk_val_...`). It is validate-only, carries no PII, and cannot create anything, so it is safe to store in a survey tool's server-side credential store. Always use a key. Calling without one enables token-burn abuse and gives an enumeration oracle to anyone who can guess token strings.
+  </Step>
+</Steps>
+
+## Two layers of protection
+
+<AccordionGroup>
+  <Accordion title="Layer 1: the gated link (platform-agnostic)">
+    The gated link is enforced entirely on our side, before the respondent ever touches your survey URL. It works identically regardless of which survey tool you use, because it requires nothing from the survey tool at all.
+
+    What it stops:
+
+    - Bots and automated scripts that cannot pass a live liveness check
+    - Deepfake video and replay attacks
+    - Repeat-takers: because uniqueness is checked at mint time, the same person cannot earn a second token even if they try a different device or browser
+
+    The honest limit of Layer 1 alone is the **raw survey URL**. If a respondent obtains your survey's direct link and bypasses the gated link entirely, they reach your survey without a token. That is why Layer 2 exists.
+  </Accordion>
+  <Accordion title="Layer 2: the in-survey token check (platform-dependent)">
+    Layer 2 closes the raw-URL gap by making the survey itself refuse or ignore responses that arrive without a valid token. How strong this layer is depends entirely on what your survey platform supports. There are three tiers:
+
+    - **True gate**: the token is checked server-side before any question loads. A bad or missing token blocks entry with no bypass. This is possible with Qualtrics (via single-use personal distribution links with Invitation Only enabled), Alchemer (via its Login/Password one-time-password page), MTurk (via a custom Qualification), or any researcher-hosted wrapper page that calls `peek` before rendering the form.
+    - **Soft gate + webhook**: the token routes a bad or missing entry toward an end screen, and a webhook re-checks every submission the instant it arrives and auto-deletes the bad ones through the platform's API, so there is no CSV cross-referencing. Typeform, Jotform, Tally, SurveyMonkey, and Google Forms all work this way.
+    - **Direct call**: the destination's own code calls `peek` before it saves the response, which is effectively a true gate. Formspark and any form on a page you control work this way.
+
+    For soft-gate-plus-webhook tools, the real protection is Layer 1 (our wrapper) plus uniqueness. A respondent who reaches the survey via a leaked direct URL still cannot earn a second token, so the repeat-taker problem is still solved; you simply have a residual of first-timers who bypassed the wrapper, which you handle by not paying tokenless completions.
+
+    See [Platform tiers](/platform-tiers) for the full breakdown of what each tool supports and how to configure it.
+  </Accordion>
+</AccordionGroup>
+
+## Why uniqueness is the real lock
+
+Liveness alone answers "is a live human doing this right now?" It does not answer "is this the same person who already did it?"
+
+A one-time code that says "a live human clicked" can be screenshotted, forwarded, or farmed by a group of people each doing one click. A token bound to one unique face cannot be reused: the same person cannot get a second token because we refuse to mint one for a face we have already seen in this study. So even where in-survey enforcement is imperfect, the repeat-taker, which is the pattern researchers care about most, is stopped at the source.
+
+The token is, in effect, a claim ticket we mint and look up, like a coat-check stub. On a verified pass we generate a random opaque string and record it in our database as "real, unused, for this study, expires in about 30 minutes." The ticket rides along in the URL as `?vyt=`. When the survey, a webhook, or a wrapper page wants to confirm it, it hands the ticket back to us and we answer four questions: did we mint this? is it unused? is it for this study? is it unexpired? Only "yes to all" counts. It cannot be guessed because it only matches if we made it, and it cannot be earned twice because the same face only gets one.
+
+For a deeper look at the token's lifecycle and security properties, see [The token](/the-token).

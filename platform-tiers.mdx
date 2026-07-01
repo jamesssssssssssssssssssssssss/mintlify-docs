@@ -1,0 +1,96 @@
+---
+title: "Platform tiers: when a bad respondent is caught"
+description: "How VerifyYou catches bad respondents across every survey platform, and when in the flow that catch happens."
+---
+
+Every platform we support enforces VerifyYou. The question is not whether a bot or repeat-taker becomes a valid, paid, counted response. It is when in the flow they are stopped. We organize platforms into three tiers based on that timing.
+
+## The three tiers at a glance
+
+| Tier | When enforcement happens | What a bad respondent experiences |
+|---|---|---|
+| **True gate** | Before any question loads | Never sees the survey |
+| **Soft gate + auto-reject** | The instant they submit | Completes the form, then is rejected and deleted automatically |
+| **Direct-call** | Before the response is saved by your code | Never produces a stored response |
+
+---
+
+## True gate
+
+The token is checked before the survey renders. A respondent who fails or skips the VerifyYou check never reaches the first question. There is no window for gaming.
+
+**Platforms that reach this tier:**
+
+- **Qualtrics** using single-use personal links (the token rides in the contact list entry)
+- **Alchemer** using login or password protection (credentials generated from the VerifyYou token)
+- **MTurk** using a VerifyYou-issued qualification
+- **Any researcher-hosted wrapper page** that calls `GET /v3/survey/peek` and only renders an `<iframe>` or redirect on `verified: true`
+
+<Tip>
+A wrapper page you host is always a true gate, regardless of what survey tool sits behind it. If you control the entry point, you control the tier.
+</Tip>
+
+---
+
+## Soft gate + auto-reject
+
+The respondent enters the survey and submits it. At the moment of submission, a webhook fires to your endpoint (or ours, if you use a platform-native integration), which calls `GET /v3/survey/peek` to check the token. If the token is missing, expired, already burned, or belongs to the wrong flow, the platform API deletes the response automatically. No bad response reaches your CSV or your data export.
+
+**Platforms that reach this tier:**
+
+- Typeform
+- Jotform
+- Tally
+- SurveyMonkey
+- Google Forms
+
+The honest trade-off: the respondent does see the survey and experiences what looks like a completion. They are rejected shortly after, before the response is recorded or paid. In practice this means no bad response ever appears in your data, but it does mean a determined bad actor sees your question text once.
+
+<Note>
+On these platforms, `POST /v3/survey/consume` is called only after the webhook confirms the response will be accepted, not at submission. This is intentional: `GET /v3/survey/peek` is idempotent and does not burn the token, so you can call it safely from a webhook without risk of prematurely consuming a valid token.
+</Note>
+
+---
+
+## Direct-call
+
+Your own code, or a platform like Formspark that exposes server-side submission hooks, calls `GET /v3/survey/peek` before writing the response to storage. If the check fails, the write never happens. This behaves like a true gate from a data-integrity standpoint, even if the form itself loaded in the browser.
+
+**Platforms and patterns that reach this tier:**
+
+- Formspark (server-side submission handler)
+- Your own application calling the VerifyYou API directly before persisting a record
+
+---
+
+## Bypassable does not mean insecure
+
+Opening a survey page is not the same as producing a response that counts or gets paid.
+
+On soft-gate platforms, a respondent who skips the VerifyYou check and goes directly to the survey URL will submit a response with no token, or a token that fails validation. The webhook deletes it. They receive no completion code and no payment.
+
+More importantly, the uniqueness guarantee closes the repeat-taker problem regardless of tier. Every token is bound to one unique face. The same person cannot earn a second token for the same study, because our system records the face hash and refuses to mint again. So even if someone completes the visible survey, they cannot repeat it under a second identity to accumulate responses.
+
+The tier tells you how early the check fires. It does not change what the check guarantees.
+
+---
+
+## Choosing your tier
+
+<CardGroup cols={3}>
+  <Card title="True gate" icon="shield-halved">
+    Use when you want zero exposure: no question text, no form, no experience for anyone who has not passed the check.
+  </Card>
+  <Card title="Soft gate + auto-reject" icon="circle-check">
+    Use when your survey platform handles webhooks and you want managed platform-native integrations without hosting your own entry layer.
+  </Card>
+  <Card title="Direct-call" icon="code">
+    Use when you own the submission path and want the tightest possible control with no third-party webhook dependency.
+  </Card>
+</CardGroup>
+
+For a full list of platform-specific setup guides, see [Survey platform overview](/survey/overview).
+
+<Note>
+The tier is about **when** a bad respondent is caught, never whether. In every tier listed here, a bot or repeat-taker cannot become a valid, paid, counted respondent.
+</Note>

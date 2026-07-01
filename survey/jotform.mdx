@@ -1,0 +1,201 @@
+---
+title: "Jotform"
+description: "Add deepfake-resistant human verification to any Jotform survey using a wrapper-page gate or a webhook-plus-delete backstop."
+---
+
+Jotform has one important quirk you need to know before choosing an approach: its conditional logic does **not** block submission when a hidden required field is empty. Jotform simply treats such fields as not required, so an in-form token check cannot enforce anything on its own. The two patterns below work around this correctly.
+
+<CardGroup cols={2}>
+  <Card title="Wrapper-page gate (recommended)" icon="shield-check">
+    Your page validates the token before the Jotform iframe loads. A bad or missing token never sees the form. True gate, no bypass.
+  </Card>
+  <Card title="Webhook + delete (backstop)" icon="bell">
+    The respondent can load and submit the form, but a webhook fires instantly on submission. You peek the token and delete the response via the Jotform API if it is invalid. Bad responses never reach your CSV.
+  </Card>
+</CardGroup>
+
+<Note>
+Use the webhook as a backstop for the wrapper-page approach, not as a replacement. Together they cover the edge case where someone submits a tampered hidden field value.
+</Note>
+
+## How a token reaches Jotform
+
+When a respondent completes the VerifyYou check, we redirect them to your `return_path` with two query parameters appended:
+
+```
+https://your-domain.com/study?vyt=TOKEN&vyc=1&YOUR_PASS_PARAMS
+```
+
+- `vyt` is the single-use token, a random opaque string we minted after confirming a live, unique face.
+- `vyc=1` means verified, `vyc=0` means not.
+- Any participant IDs you set in `pass_params` (for example `pid=PROLIFIC_PID`) ride along on this same URL.
+
+Your wrapper page reads `vyt` from the URL, calls `GET /v3/survey/peek` to confirm it is real and unexpired, then either renders the Jotform iframe or shows a screen-out message.
+
+---
+
+## Option A: Wrapper-page gate (recommended)
+
+This is the closest Jotform gets to a true gate. The respondent never sees the form until the token passes.
+
+<Steps>
+  <Step title="Create your Jotform and note the embed URL">
+    Build the form normally. Copy the direct form URL (for example `https://form.jotform.com/FORM_ID`). You will load this inside an iframe.
+
+    Add a hidden field called `vyt_token` to the form. Jotform pre-populates hidden fields from URL parameters, so your wrapper page passes the token as a query parameter on the iframe `src`. This gives you a record of the token alongside each submission without any cross-origin JavaScript.
+  </Step>
+
+  <Step title="Initialize the VerifyYou check">
+    Call `POST /v3/initialize` from your server. Set `return_path` to the path of your wrapper page, and include the participant ID in `pass_params` so it comes back on the redirect URL.
+
+    ```json
+    {
+      "verification_id": "your-flow-id",
+      "return_path": "/study/jotform-gate",
+      "pass_params": "pid=PROLIFIC_PID",
+      "origin": "https://your-domain.com"
+    }
+    ```
+
+    Send the respondent to the `url` value returned.
+  </Step>
+
+  <Step title="Build the wrapper page">
+    On your wrapper page, read `vyt` and `vyc` from the URL query string. Call `GET /v3/survey/peek` with the token before rendering anything.
+
+    ```js
+    const params = new URLSearchParams(window.location.search);
+    const vyt = params.get('vyt');
+
+    const res = await fetch(`/api/peek?vyt=${vyt}`); // your thin server proxy
+    const { verified } = await res.json();
+
+    if (!verified) {
+      // show screen-out message, redirect to your recruitment platform's
+      // failure URL, or handle as your IRB protocol requires
+      document.getElementById('gate').innerHTML = '<p>Verification failed. You are not eligible to continue.</p>';
+    } else {
+      // render the iframe, passing the token as a URL param so Jotform
+      // pre-populates the hidden vyt_token field automatically
+      const iframe = document.createElement('iframe');
+      iframe.src = `https://form.jotform.com/FORM_ID?vyt_token=${encodeURIComponent(vyt)}`;
+      document.getElementById('gate').appendChild(iframe);
+    }
+    ```
+
+    Keep your `pk_val_` key server-side in the `/api/peek` proxy. Do not expose it in browser JavaScript.
+  </Step>
+
+  <Step title="Add a webhook for deletion (backstop)">
+    In Jotform, go to Settings, then Integrations, then Webhooks. Add a webhook pointing to your server endpoint.
+
+    On each submission your endpoint receives the Jotform payload, extracts the `vyt_token` hidden field value, and calls `GET /v3/survey/peek` again. If `verified` is false, call the Jotform Submissions API to delete the response immediately.
+
+    ```bash
+    DELETE https://api.jotform.com/submission/SUBMISSION_ID?apiKey=YOUR_JOTFORM_KEY
+    ```
+
+    This catches the rare case where a token value is tampered with after the gate check.
+  </Step>
+</Steps>
+
+---
+
+## Option B: Webhook + delete only
+
+If you cannot host a wrapper page, use this as a standalone approach. The respondent can reach and submit the form, but no invalid submission survives.
+
+<Steps>
+  <Step title="Add a hidden field for the token">
+    Add a hidden field named `vyt_token` to your Jotform. Pass `vyt` in the Jotform embed URL or as a query parameter to the direct form URL so Jotform pre-populates it.
+
+    ```
+    https://form.jotform.com/FORM_ID?vyt_token=TOKEN
+    ```
+
+    Set `return_path` in your `POST /v3/initialize` call to point directly to this Jotform URL.
+  </Step>
+
+  <Step title="Configure the webhook">
+    In Jotform Settings, add a webhook pointing to your endpoint. On each submission, extract `vyt_token`, call `GET /v3/survey/peek`, and delete the submission if `verified` is false.
+  </Step>
+</Steps>
+
+<Warning>
+Without the wrapper-page gate, a respondent who skips the VerifyYou check entirely and navigates to the Jotform URL directly will reach the form with an empty `vyt_token`. Your webhook will peek an empty or missing token, get `verified: false`, and delete that submission. The respondent wastes time completing the form, but they produce no valid response. The mechanism still works, it just catches the attempt after the fact rather than before.
+</Warning>
+
+---
+
+## Token peek and consume
+
+Both patterns use the same two endpoints.
+
+**Peek** (idempotent, call as many times as needed):
+
+```bash
+GET /v3/survey/peek?vyt=TOKEN
+Authorization: Bearer pk_val_FLOW_RAND
+```
+
+```json
+{ "verified": true, "reason": null }
+```
+
+**Consume** (burns the token, call once when you accept a completion as final):
+
+```bash
+POST /v3/survey/consume?vyt=TOKEN
+Authorization: Bearer pk_val_FLOW_RAND
+```
+
+```json
+{ "consumed": true }
+```
+
+Call consume after you have confirmed the submission is valid and you intend to count it. The token TTL is roughly 30 minutes from issue, so have respondents proceed directly from the VerifyYou check to the form.
+
+<Note>
+Your `pk_val_` key is a per-Flow publishable validation key. It is validate-only and revocable, carries no PII, and cannot create anything. It is safe to store in a server-side credential store. Do not embed it in client-side JavaScript and do not treat "no key at all" as acceptable. An unprotected peek endpoint enables token-burning denial-of-service and an enumeration oracle.
+</Note>
+
+---
+
+## Why the uniqueness check matters here
+
+Jotform has no native respondent deduplication. A participant who completes your form twice produces two submissions and earns two incentives. Because VerifyYou binds each token to one unique face, the same person cannot obtain a second token. Even if they return to the recruitment link, they are screened out at the VerifyYou step before they reach your form. The repeat-taker problem is solved at the source, not by comparing submission metadata after the fact.
+
+---
+
+## Frequently asked questions
+
+<AccordionGroup>
+  <Accordion title="Can I use Jotform's built-in conditional logic to check the token?">
+    No. Jotform conditional logic does not block form submission on a hidden or required field that is empty or has an unexpected value. The form will submit regardless. You need either the wrapper-page gate or the webhook-plus-delete pattern described above.
+  </Accordion>
+
+  <Accordion title="What happens if the respondent takes longer than 30 minutes to finish the form?">
+    The token will have expired. Your webhook peek will return `verified: false` and you will delete the submission. Consider this when designing forms: keep them concise, or instruct participants to proceed directly from the VerifyYou check to the survey without pausing.
+  </Accordion>
+
+  <Accordion title="Will deleted submissions appear in Jotform reports or exports?">
+    No. A submission deleted via the Jotform API is removed from all views, reports, and CSV exports immediately.
+  </Accordion>
+
+  <Accordion title="Can I use this with a Prolific or Qualtrics recruitment leg?">
+    Yes. The recruitment leg and the survey leg are independent. You pass your Prolific participant ID through `pass_params` on the VerifyYou initialize call, it comes back on the return URL, and you forward it into the Jotform URL as a pre-fill parameter alongside the token. See [/recruitment/prolific](/recruitment/prolific) for the Prolific-specific setup.
+  </Accordion>
+
+  <Accordion title="Is there a no-code option for Jotform?">
+    The no-code share link at `app.verifyyou.com/verification/ID` with a success redirect URL set in the dashboard covers the simple redirect case. It sends verified respondents to a URL you specify, with `?vyt=TOKEN` appended. You can point that redirect directly to your Jotform URL. The token will land in the `vyt_token` hidden field, and your webhook handles enforcement. Note that a failure redirect for the no-code path does not yet exist, so respondents who do not pass verification will reach a VerifyYou-hosted end screen rather than a platform-specific screen-out URL. You also do not get a wrapper-page gate with the no-code path.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Related pages
+
+- [Choosing your flow](/choosing-your-flow)
+- [Recruitment: Prolific](/recruitment/prolific)
+- [Survey: Qualtrics](/survey/qualtrics)
+- [Survey: Typeform](/survey/typeform)

@@ -1,0 +1,123 @@
+---
+title: "Prolific"
+description: "Add a deepfake-resistant uniqueness check to your Prolific study by pasting a gated link as the External Study URL, with optional Secure External URL signing that hard-blocks direct-URL attackers before the liveness check even runs."
+---
+
+Prolific is one of the cleanest recruitment legs to wire up. You paste our gated link as the study's External Study URL, carry `PROLIFIC_PID` through so completions map back to participants, and set your screen-out completion code for failed or declined respondents. The result is a true gate: no respondent reaches your survey without passing liveness and uniqueness.
+
+<Warning>
+  Turn on **Secure External URL** for any real study. Without it, anyone who knows your gated link can attempt the check directly, bypassing Prolific's participant pool entirely.
+</Warning>
+
+## How it works
+
+Prolific passes your participants to our hosted check at `app.verifyyou.com/v/SESSION`. We run liveness and uniqueness. On pass, we return them to your survey with `?vyt=TOKEN&vyc=1` appended, along with whatever you put in `pass_params` (including `PROLIFIC_PID`). Respondents who fail or decline are directed to your Prolific screen-out completion URL. Your survey then enforces the token before a response is recorded.
+
+The two legs never touch each other. Prolific knows nothing about our check; your survey tool knows nothing about Prolific. The gated link is the only join point.
+
+## Setup
+
+<Steps>
+  <Step title="Create a Flow and copy the gated link">
+    In your VerifyYou dashboard, create a Flow for this study. Copy the hosted check URL, which will look like `app.verifyyou.com/verification/YOUR_FLOW_ID`. This is what you paste into Prolific.
+  </Step>
+
+  <Step title="Configure the Flow return path and pass_params">
+    Set your Flow's `return_path` to point at your survey's entry URL. Prolific expects participants to land at your survey after the check; the `return_path` is where we send them on a pass.
+
+    Add `PROLIFIC_PID` to `pass_params` so the participant ID rides through to your survey's entry URL:
+
+    ```json
+    {
+      "pass_params": ["PROLIFIC_PID"],
+      "return_path": "/your-survey-entry"
+    }
+    ```
+
+    Your survey receives the participant on a URL like:
+
+    ```
+    https://yoursurvey.com/entry?PROLIFIC_PID=abc123&vyt=TOKEN&vyc=1
+    ```
+  </Step>
+
+  <Step title="Set the screen-out completion code">
+    In Prolific, copy your study's screen-out completion code. Configure your Flow to send respondents who fail liveness, fail uniqueness, or decline the check to the corresponding Prolific screen-out URL (which takes the form `https://app.prolific.com/submissions/complete?cc=YOUR_SCREENOUT_CODE`).
+
+    A screen-out on Prolific costs a researcher-set fee (minimum about $0.14 per participant). A harder gate here directly lowers your cost per valid response, because fewer bad respondents reach your survey.
+  </Step>
+
+  <Step title="Paste the gated link into Prolific as the External Study URL">
+    In your Prolific study settings, under **How will you collect your data?**, choose **I'll use my own survey tool** and paste the gated link as the **External Study URL**.
+
+    Prolific appends its own URL parameters automatically, including `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID`. Our check carries those forward.
+  </Step>
+
+  <Step title="Enable Secure External URL">
+    In your Prolific study settings, turn on **Secure External URL**. Prolific then signs the entry parameters as a short-lived RS256 JWT (roughly two minutes expiry). VerifyYou verifies that signature at entry using Prolific's public keys at `api.prolific.com/.well-known/study/jwks.json`.
+
+    The effect: anyone who tries to reach your gated link without coming through Prolific is hard-blocked before the liveness check runs. You flip the setting; we handle the signature verification.
+  </Step>
+
+  <Step title="Enforce the token in your survey">
+    Add token enforcement on the survey leg. The right tier depends on your survey tool:
+
+    - **True gate** (recommended): use a wrapper page or a platform that checks the token before any question loads. See [Qualtrics](/survey/qualtrics) for the personal-link approach, or [write a wrapper page](/survey/overview) if you control the hosting.
+    - **Soft gate with webhook**: platforms like Typeform or Jotform can call our API the instant a respondent submits, auto-deleting responses with an invalid or missing token.
+
+    Regardless of tier, use the survey-validate endpoint to check the token:
+
+    ```http
+    GET /v3/survey/peek?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    This returns `{ verified, reason }` without burning the token, so you can check at entry and again from a webhook. When a real completion is accepted, burn it:
+
+    ```http
+    POST /v3/survey/consume?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    The key here is a per-Flow publishable validation key (`pk_val_...`). It validates tokens but cannot create anything or access PII, so it is safe to store in your survey tool's server-side credential store.
+  </Step>
+</Steps>
+
+## Optional: automated request returns via webhook
+
+If you want to handle edge cases automatically, configure a `response.submitted` webhook on your survey platform. When a completion code arrives without a valid token, the webhook can call Prolific's API to issue an automated **REQUEST RETURN** for that participant rather than approving them.
+
+This is optional. The token gate already blocks invalid respondents from completing; the webhook adds a cleanup layer for any slip-through or timing edge case.
+
+## Trade-offs
+
+<CardGroup cols={2}>
+  <Card title="Enforcement" icon="shield-check">
+    True gate with Secure External URL on. Direct-URL attackers are blocked before the check runs. Bad respondents are screened out, not just flagged.
+  </Card>
+  <Card title="Setup effort" icon="wrench">
+    Low to medium. Paste a link, set a completion code, flip one toggle. Token enforcement on the survey leg adds a step but most researchers reach it in under an hour.
+  </Card>
+  <Card title="Cost of a screen-out" icon="circle-dollar-to-slot">
+    Researcher-set, minimum about $0.14 per screen-out. A stronger gate lowers your total cost because fewer ineligible respondents reach the survey.
+  </Card>
+  <Card title="Best for" icon="bullseye">
+    Academic researchers who need a clean participant mapping (PID), fast study setup, and a meaningful cost incentive to keep bad respondents out.
+  </Card>
+</CardGroup>
+
+## Why uniqueness matters on Prolific
+
+Prolific's participant pool is generally clean, but the problem most researchers actually care about is repeat-takers: the same person in multiple conditions, or across studies that share a pool. A liveness check alone cannot stop this; a shared code or a cooperative participant can pass it twice.
+
+Our uniqueness check does. The token is bound to one unique face, minted once. The same person cannot earn a second token for the same Flow, so even if they re-enroll with a different Prolific account, they are screened out before reaching your survey.
+
+<Info>
+  The token is an opaque random string we record on our end as "real, unused, for this Flow, expires in about 30 minutes." It cannot be guessed or forged, because it only matches if we minted it. See [How tokens work](/the-token) for the full mechanism.
+</Info>
+
+## Mapping completions back to Prolific
+
+Because `PROLIFIC_PID` rides through `pass_params`, your survey entry URL receives it alongside the token. You can join your response data to Prolific's participant data on that field without any additional lookup.
+
+If you also need to verify a token server-side after a response is saved, `GET /v3/confirmations/TOKEN` (authenticated with your `sk_` secret key) returns `{ verified, external_id }`. Do not expose your `sk_` key to the browser or to your survey tool.

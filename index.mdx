@@ -1,20 +1,51 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "VerifyYou for surveys and gated actions"
+description: "Put a deepfake-resistant, uniqueness-enforced human check in front of any survey, checkout, or signup, on platforms we have never touched."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+VerifyYou puts a deepfake-resistant "are you a real, unique human?" check in front of any action, on any platform, without the platform needing to know we exist. You deploy it; your survey tool, checkout page, or signup form just sees a respondent who either passed or did not.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+The output of every check is a single primitive: a **single-use token bound to one unique face**. Think of it like a coat-check stub. We mint one when a respondent passes liveness and uniqueness, and we record it in our own database as "real, unused, for this study, valid for about 30 minutes." The respondent carries the stub back to your survey. When your survey (or a webhook, or a wrapper page) hands the stub back to us, we look it up: is it real? unused? for this study? not expired? Only "yes to all" counts. It cannot be faked because we minted it, and the uniqueness check means the same person cannot earn a second one, so sharing or farming does not work either.
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+<Note>
+  These docs are written for academic and market researchers running paid studies, but the same primitive works for any gated action, including checkouts and signups. If that is your use case, read on.
+</Note>
+
+## The two legs
+
+Every integration has the same shape, with two ends you pick independently.
+
+<Steps>
+  <Step title="Recruitment leg">
+    Where respondents start. You paste our gated link here, whether that is a Prolific study URL, a Qualtrics mailing list, a social post, or anywhere else. This leg decides what a rejection costs the respondent.
+  </Step>
+  <Step title="VerifyYou check">
+    A ~20-second liveness selfie. We run liveness detection and a uniqueness check. On pass we redirect the respondent back to your survey with the token in the URL. On fail we tell them they did not pass.
+  </Step>
+  <Step title="Survey leg">
+    Where the survey or action lives. This leg decides how strongly the token is enforced, from a true entry gate (no bad respondent ever sees a question) to an auto-reject webhook (a bad response is deleted the instant they submit). Either way, a bad token never becomes a paid, counted response.
+  </Step>
+</Steps>
+
+The two legs never touch each other. They only touch our gated link in the middle. That means there is no matrix of platform pairings to learn: you pick your recruitment source and your survey tool independently, and the same check sits between them.
+
+## Why uniqueness is the real lock
+
+A code that only proves "a live human clicked" can be shared or farmed. A token bound to one unique face cannot. Even if a respondent passes the liveness check, the uniqueness check means the same person cannot earn a second token for the same study. That is the problem researchers actually care about: the repeat taker, the panel member who completes on two devices, the farmer who sends the link to a friend. Liveness stops bots; uniqueness stops duplicates.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="How it works" icon="circle-nodes" href="/how-it-works">
+    The full technical flow: the API call, the token, the return URL, and how enforcement tiers work.
+  </Card>
+  <Card title="Choose your flow" icon="code-branch" href="/choosing-your-flow">
+    Pick the right enforcement tier for your study design and platform.
+  </Card>
+  <Card title="Recruitment sources" icon="users" href="/recruitment/overview">
+    Prolific, MTurk, Qualtrics panels, and direct links: where to paste the gated URL and what rejection means for each.
+  </Card>
+  <Card title="Survey platforms" icon="list-check" href="/survey/overview">
+    Qualtrics, Typeform, Alchemer, Tally, Google Forms, and more: how each platform enforces the token.
+  </Card>
+</CardGroup>

@@ -1,0 +1,181 @@
+---
+title: "Tally"
+description: "Add deepfake-resistant human verification to a Tally form using a wrapper-page true gate or a hidden-field + webhook auto-delete soft gate."
+---
+
+Tally supports two integration shapes. Pick one based on how strictly you need to block unverified respondents before they touch the form.
+
+<CardGroup cols={2}>
+  <Card title="Wrapper page (true gate)" icon="shield-check">
+    Verification runs before the form opens. An unverified respondent never sees a question. Best when you need a clean block at entry.
+  </Card>
+  <Card title="Hidden field + webhook delete (soft gate)" icon="webhook">
+    The form opens, but a webhook fires on submission, checks the token, and deletes any response that fails. No bad response survives in your dataset.
+  </Card>
+</CardGroup>
+
+## Option A: wrapper page (true gate)
+
+A small page you host calls `Tally.openPopup()` only after the VerifyYou check passes. The form never loads for an unverified respondent.
+
+<Steps>
+  <Step title="Create your Tally form">
+    Build your form in Tally. Note the form ID from the share URL (the short code after `tally.so/r/`). Enable the **Embed** option and copy the popup embed snippet, which gives you the `Tally.openPopup('FORM_ID')` call.
+  </Step>
+  <Step title="Initialize a VerifyYou session">
+    From your server, call `POST /v3/initialize` with your `pk_` key:
+
+    ```json
+    {
+      "verification_id": "your-flow-id",
+      "pass_params": "rid=PARTICIPANT_ID",
+      "origin": "https://your-wrapper-page.com",
+      "return_path": "/verified"
+    }
+    ```
+
+    The response gives you a `url` pointing to `app.verifyyou.com/v/SESSION`. Send the respondent there.
+  </Step>
+  <Step title="Read the return and gate the popup">
+    After the check, VerifyYou returns the respondent to `origin + return_path` with `?vyt=TOKEN&vyc=1` (verified) or `vyc=0` (not verified).
+
+    On your return page, read the query string. If `vyc` is not `1`, show a screen-out message and stop. If `vyc` is `1`, peek at the token from your server before opening the form:
+
+    ```http
+    GET /v3/survey/peek?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    A `{ "verified": true }` response means the token is real and unused. Only then call `Tally.openPopup('FORM_ID')`.
+  </Step>
+  <Step title="Pass the token into the form">
+    Open the popup with hidden values so the token rides into Tally:
+
+    ```js
+    Tally.openPopup('FORM_ID', {
+      hiddenFields: {
+        vyt: token,
+        rid: participantId
+      }
+    });
+    ```
+
+    Map `vyt` to a hidden field in your Tally form (see the hidden fields section of Tally's embed docs).
+  </Step>
+  <Step title="Consume the token on a clean submission">
+    When Tally fires the `FORM_RESPONSE` webhook for a completion you want to count, call:
+
+    ```http
+    POST /v3/survey/consume?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    This burns the token so the same verified session cannot be submitted twice.
+  </Step>
+</Steps>
+
+<Tip>
+  Because you gate on `peek` before the popup opens, the form itself is a true gate. The `consume` call on submission is a second lock: it prevents a respondent from saving their return URL and re-submitting.
+</Tip>
+
+---
+
+## Option B: hidden field + conditional logic + webhook delete (soft gate)
+
+No wrapper page needed. The check happens inside Tally through a hidden field and a webhook that deletes any submission with a bad token.
+
+<Warning>
+  With this option, the first page of your form loads before verification is confirmed. An unverified respondent sees that shell before being screened out. If even that exposure is unacceptable, use Option A instead.
+</Warning>
+
+<Steps>
+  <Step title="Add a hidden field named vyt">
+    In your Tally form, add a **Hidden field** and name it `vyt`. This field will hold the token passed in the return URL.
+
+    In your VerifyYou dashboard, set the **Success redirect URL** to your Tally form share link. VerifyYou automatically appends `?vyt=TOKEN` to that URL when it redirects a verified respondent, and Tally picks up query parameters that match hidden field names automatically.
+  </Step>
+  <Step title="Add a conditional logic disqualification screen">
+    Add an early screen in your form (right after any intro, before any real questions) that contains only a disqualification message.
+
+    Add a conditional logic rule: if `vyt` **is empty**, jump to the disqualification screen. This fires when the respondent clicks Next, so it catches anyone who arrived without going through the VerifyYou link.
+
+    <Note>
+      Confirm in Tally's logic builder that hidden fields are available as IF-condition sources for your account tier. As of this writing, Tally supports hidden fields in logic conditions, but the option appears only once a hidden field exists in the form.
+    </Note>
+  </Step>
+  <Step title="Enable duplicate submission prevention">
+    In your Tally form settings, turn on **Prevent duplicate submissions** and select the `vyt` field as the uniqueness key. This blocks a respondent from re-submitting the same token a second time at the platform level.
+  </Step>
+  <Step title="Set up the FORM_RESPONSE webhook to delete bad submissions">
+    This is the step that turns a captured response into an auto-rejected one. In your Tally integrations, add a webhook pointing to your validation endpoint. When Tally calls your webhook on `FORM_RESPONSE`, your server must:
+
+    1. Extract the `vyt` value from the submission fields.
+    2. Call `GET /v3/survey/peek?vyt=TOKEN` to check the token.
+    3. If `verified` is `false` or the token is missing, call the Tally API to delete the submission:
+
+    ```http
+    DELETE https://api.tally.so/forms/FORM_ID/submissions/SUBMISSION_ID
+    Authorization: Bearer YOUR_TALLY_API_KEY
+    ```
+
+    4. If `verified` is `true`, call `POST /v3/survey/consume?vyt=TOKEN` to burn it, then proceed with your normal completion handling.
+
+    Without the delete call, bad submissions sit in your Tally dataset even if you flagged them. The delete is what makes this a soft-gate auto-reject rather than a capture-only record.
+  </Step>
+</Steps>
+
+---
+
+## Comparing the two options
+
+<CardGroup cols={2}>
+  <Card title="Wrapper page (Option A)" icon="shield-check">
+    **Enforcement:** True gate. Unverified respondents never see the form.
+
+    **Setup:** You host a small page. Requires server-side session initialization and token peek before popup.
+
+    **Duplicate block:** Token consumed on submission via your webhook.
+
+    **Best for:** Studies where even form-shell exposure matters, or where you want the cleanest possible block.
+  </Card>
+  <Card title="Hidden field + webhook delete (Option B)" icon="webhook">
+    **Enforcement:** Soft gate. Form shell loads; bad submissions are deleted before they count.
+
+    **Setup:** Tally-native, no wrapper page. Requires a webhook endpoint that calls the Tally delete API.
+
+    **Duplicate block:** Tally's duplicate-prevention on the `vyt` field, plus token consume on valid completion.
+
+    **Best for:** Lower-friction setup when brief form-shell exposure is acceptable and you can run a webhook endpoint.
+  </Card>
+</CardGroup>
+
+---
+
+## Token security
+
+Both options use the same two-call pattern for a reason. `peek` is idempotent: you can call it at your entry gate and again from the webhook without burning the token. `consume` is single-use: call it exactly once when you accept a completion. Using a **publishable validation key** (`pk_val_`) means the key is safe to store in Tally's credential store or your webhook handler. It can check and burn tokens for one specific Flow, but it cannot create sessions, read PII, or access other Flows.
+
+Do not skip authentication on the peek or consume calls. An unauthenticated endpoint would let anyone burn tokens by guessing, and would let a determined respondent probe whether a given token string is valid.
+
+<AccordionGroup>
+  <Accordion title="What happens if the webhook fires but my server is down?">
+    Tally retries failed webhook deliveries. Until your server responds with a success status, the deletion has not happened. For critical studies, log every webhook receipt and deletion call so you can manually clean up any submissions that slipped through a transient outage.
+  </Accordion>
+  <Accordion title="Can the same respondent get a second token and a second submission?">
+    No. VerifyYou's uniqueness check means a respondent who has already passed cannot get a second token for the same Flow. The `consume` call on the first submission also burns the token, so even if a second form session were opened somehow, the token would fail the peek on the next webhook.
+  </Accordion>
+  <Accordion title="The vyt conditional logic rule is not appearing in Tally. What do I check?">
+    Confirm the hidden field named `vyt` exists in the form before opening the logic builder. Tally populates the field list dynamically from existing form fields. If the field was added after you last opened logic, close and reopen the logic panel.
+  </Accordion>
+  <Accordion title="Is there a screen-out redirect for respondents who fail?">
+    A dedicated failure redirect URL is on the VerifyYou build list but does not exist yet. In the meantime, handle the `vyc=0` case on your own return page (for Option A) or rely on the conditional logic disqualification screen (for Option B).
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Related pages
+
+- [Choosing your flow](/choosing-your-flow) to decide between a true gate and a soft gate for your study design.
+- [Prolific](/recruitment/prolific) and other recruitment leg docs for how participant IDs travel through `pass_params`.
+- [Qualtrics](/survey/qualtrics) for a comparison with a platform that supports a native true-gate pattern without a wrapper page.

@@ -1,0 +1,102 @@
+---
+title: "What We Build vs What the Researcher Does"
+description: "A clean split of engineering responsibilities: what VerifyYou ships, what the researcher configures, and the order to build it."
+---
+
+This page is for engineers building or extending VerifyYou integrations. It answers two questions: which half of an integration belongs to us, and in what order should the build proceed to unlock the most value fastest.
+
+## Responsibility split
+
+Each integration family has a fixed shape. VerifyYou builds the shared services and the adapter that connects them to a platform. The researcher does one setup step per study, usually a single field in a dashboard.
+
+Family letters match [the architecture page](/build/architecture): A = single-use link or credential, B = wrapper gate, C = webhook auto-delete, D = direct call.
+
+| Connector family | What VerifyYou builds | What the researcher does |
+|---|---|---|
+| **A — Single-use link or credential** (Qualtrics personal links, Alchemer OTP pool, MTurk qualification) | Credential-delivery step that, after a verified pass, generates a one-time link or credential and pushes it to the platform's distribution / OTP / qualification API (consuming the token via `/v3/survey/consume` at generation) | Enables the personal-links panel, login-password page, or qualification requirement once; supplies a scoped platform API token |
+| **B — Wrapper page** (Typeform, Jotform, Tally, SurveyMonkey, Google Forms) | Hosted entry page that calls `/v3/survey/peek`, blocks on a bad token, then redirects to the real survey URL with params forwarded | Pastes the wrapper URL as the survey start link in the platform; no platform config needed |
+| **C — Webhook delete** (same platforms) | Webhook receiver per platform that calls `/v3/survey/peek` on submission, deletes the response via the platform API if invalid | Adds the webhook URL in the platform's notification settings; supplies their platform API key once |
+| **D — Direct call** (Formspark, own app) | Core endpoints only: `peek` and `consume` behind `pk_val_` keys, documented | Developer calls `peek` before saving a submission; nothing else required |
+| **Recruitment hardening** | Prolific JWT signature verification, MTurk qualification grant/check, Cint S2S postback signing | Supplies their platform study ID or qualification ID once per study |
+
+<Note>
+Rows B and C are two shared services (wrapper + webhook-delete), not 2N adapters. Each new platform in that family needs only a thin adapter on top of the shared logic.
+</Note>
+
+## Build order
+
+Sequence by leverage: each item unblocks more downstream work than the one after it.
+
+<Steps>
+  <Step title="Core: pk_val keys, peek/consume, failure redirect, activity log">
+    This is the foundation every other tier depends on.
+
+    - Ship `GET /v3/survey/peek?vyt=TOKEN` (idempotent, does not burn the token) and `POST /v3/survey/consume?vyt=TOKEN` (single-use burn).
+    - Issue per-Flow publishable validation keys (`pk_val_FLOW_RAND`). These are validate-only, revocable, carry no PII, and cannot create anything, so they are safe to hold in a survey tool's server-side credential store.
+    - Add a configurable failure redirect URL in the dashboard (parity with the existing success redirect). This is currently on the build list and is required before Alchemer and Tally native-logic paths can be fully gated.
+    - Expose an activity log and per-study CSV export so researchers can audit who verified and when.
+
+    Formspark and own-app integrations (row D) are done as soon as core ships. They need nothing else.
+  </Step>
+
+  <Step title="Wrapper page + webhook-delete (covers Typeform, Jotform, Tally, SurveyMonkey, Google Forms)">
+    Two shared services plus one thin adapter per platform.
+
+    - **Wrapper page**: calls `peek` on entry, blocks respondents with a bad or missing token before they see a single question, then forwards them to the real survey URL with `pass_params` forwarded.
+    - **Webhook-delete receiver**: calls `peek` on submission and deletes the response via the platform's own API if the token is invalid or already used.
+
+    Together these reach the soft-gate-plus-webhook tier for every platform in this family, with no per-platform rebuild of the core logic.
+  </Step>
+
+  <Step title="Qualtrics single-use personal links (academic default, strongest enforcement)">
+    Qualtrics personal links are a true gate: the link is one-time and tied to a specific respondent, so there is no entry without a valid token.
+
+    The service generates a personal link per verified respondent (calling `consume` at generation, not at survey completion), distributes it, and registers it in the Qualtrics mailing list. Researchers enable the personal links panel on their survey once; no per-study webhook config is needed.
+
+    See [/survey/qualtrics](/survey/qualtrics) for the full setup and the Web Service timing note below.
+  </Step>
+
+  <Step title="Recruitment hardening (Prolific JWT, MTurk qualification, Cint S2S)">
+    This step ties the recruitment leg to verification so that panel fraud is caught before respondents even start.
+
+    - **Prolific**: verify the study JWT signature on our side so a respondent cannot swap someone else's `PROLIFIC_PID` into the return URL.
+    - **MTurk**: grant a qualification to a Worker only after a verified token is consumed; the HIT requires that qualification.
+    - **Cint**: sign the S2S redirect so the panel provider accepts our completion signal.
+
+    See [/recruitment/prolific](/recruitment/prolific) and [/recruitment/mturk](/recruitment/mturk) for platform-specific detail.
+  </Step>
+</Steps>
+
+## Confirm before building
+
+A few design decisions deserve a deliberate choice before the code is written.
+
+<AccordionGroup>
+  <Accordion title="The peek/consume two-call design">
+    The split into `peek` (idempotent) and `consume` (destructive) is intentional. A single endpoint that always burned the token would make it impossible to check the same token at both an entry gate and a webhook without the second check failing on a valid respondent.
+
+    The contract: `peek` is safe to call as many times as you like (entry gate, webhook, audit log). `consume` is called exactly once, at the moment you accept a real completion. Do not call `consume` speculatively.
+  </Accordion>
+
+  <Accordion title="Alchemer OTP burn timing">
+    Alchemer supports a login/password entry credential, which is the mechanism for a true gate: the token (or a derived one-time password) is the credential, so no credential means no entry. The open question is when to call `consume`: at login-click (before any questions load) or at survey completion.
+
+    Burning at login-click is the stricter choice and matches the true-gate tier. Burning at completion introduces a window where the respondent holds a valid but unconsumed token while inside the survey. Decide which timing matches your security requirements before building the adapter. The failure redirect (build step 1 core) needs to exist before Alchemer can cleanly route screenouts.
+  </Accordion>
+
+  <Accordion title="Tally hidden field as IF-condition vs wrapper page">
+    Tally supports hidden fields and conditional logic (show/hide blocks based on field values). It is technically possible to pass `vyt` and `vyc` as hidden fields and gate questions behind an IF condition that checks `vyc=1`. The limitation: this is a soft gate at best, because the form still loads before the condition is evaluated, and a respondent who manipulates the hidden field value bypasses it entirely.
+
+    The wrapper page (build step 2) is the correct choice for any study where entry-blocking matters. Use the native hidden-field path only when a researcher explicitly needs Tally's native logic for something else and understands the tradeoff. The webhook-delete backstop applies either way.
+  </Accordion>
+
+  <Accordion title="Qualtrics Web Service end-of-survey timing bug">
+    Qualtrics supports a Web Service element that can call an external URL mid-survey or at the end. If you use this to call `peek` at completion, treat an empty or missing `verified` response as unverified. The Web Service element has a known timing issue where it occasionally fires before the request fully resolves and carries an empty body into the embedded data fields.
+
+    The safe pattern: default the embedded data field to `0` before the Web Service element runs, then overwrite it only on a confirmed `verified: true` response. Keep the webhook-delete receiver as a backstop regardless.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+If you are unsure which survey platform to prioritize, start with Qualtrics and Typeform. Qualtrics is the default for academic panels; Typeform covers a large share of market-research and UX studies. Both are fully served by build steps 1 through 3.
+</Tip>

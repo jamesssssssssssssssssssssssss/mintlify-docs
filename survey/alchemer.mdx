@@ -1,0 +1,94 @@
+---
+title: "Alchemer"
+description: "Use VerifyYou's Login/Password Action to gate your Alchemer survey behind a true server-side token check before any question loads."
+---
+
+Alchemer's **Login/Password Action** turns each VerifyYou token into a one-time password enforced by Alchemer's own infrastructure, before a single question is shown to the respondent. This is a true gate: a wrong, expired, or already-used token shows an error page and nothing else. No survey content is ever visible to a respondent who cannot produce a valid token.
+
+## How it works
+
+The two legs snap together through the token:
+
+1. **Recruitment leg** — you circulate the VerifyYou gated link (for example via Prolific, email, or a study listing). Each respondent completes the ~20-second liveness check and receives a single-use token in the return URL as `?vyt=TOKEN`.
+2. **The bridge** — your return URL (set in the VerifyYou dashboard) points to the Alchemer survey. VerifyYou appends `?vyt=TOKEN` and `vyc=1` to that URL automatically, so the token arrives as a query parameter. A thin entry page or redirect script reads `vyt` and pre-fills the Alchemer login field.
+3. **Survey leg** — Alchemer's Login/Password Action checks the token against the pre-loaded list before rendering page 1. A valid, unused token passes; anything else is blocked.
+
+The underlying Alchemer survey needs no changes to its question flow; enforcement happens in the access layer, not the logic layer.
+
+## Setup
+
+<Steps>
+  <Step title="Create your survey and add a Login/Password Action">
+    In Alchemer, open your survey and navigate to **Tools > Action > Login/Password**. Place this action before your first content page. Set the mode to **Individual Passwords** (one-time use).
+  </Step>
+
+  <Step title="Generate tokens in VerifyYou and load them into Alchemer">
+    In the VerifyYou dashboard, generate a batch of tokens for your Flow equal to (or larger than) your expected sample size. Export them as a CSV, then upload that CSV into the Alchemer Login/Password Action as the one-time password list.
+
+    Alternatively, if you are managing a large panel programmatically, you can push tokens into Alchemer via the Alchemer API rather than a manual CSV upload.
+  </Step>
+
+  <Step title="Set your VerifyYou success redirect URL to point at Alchemer">
+    In the VerifyYou dashboard, set the **Success Redirect URL** to your bare Alchemer survey URL:
+
+    ```
+    https://survey.alchemer.com/s3/YOUR_SURVEY_ID
+    ```
+
+    VerifyYou appends `?vyt=TOKEN&vyc=1` (plus any pass_params you have configured) to that URL automatically. On Alchemer's side, configure a URL variable named `vyt` and map it to pre-fill the Login/Password field. This way the respondent's token arrives pre-filled and they are admitted or rejected automatically without manual entry.
+  </Step>
+
+  <Step title="Confirm the password-burn behavior (see note below) and publish">
+    Before going live, verify when Alchemer marks a one-time password as used (see the note below). Once confirmed, publish your survey and begin recruiting through the VerifyYou gated link.
+  </Step>
+
+  <Step title="Validate tokens server-side on submission (optional but recommended)">
+    For maximum integrity, call `GET /v3/survey/peek?vyt=TOKEN` from a server-side webhook or completion handler the moment a response is submitted. If `verified` is false, discard the response. Call `POST /v3/survey/consume?vyt=TOKEN` once you accept the response as complete.
+
+    Alchemer's gate already blocks entry, so this second check is belt-and-suspenders rather than the primary line of defense. It is especially useful if your IRB or client requires an audit trail confirming each accepted response was verified.
+  </Step>
+</Steps>
+
+<Note>
+**Confirm when Alchemer burns a one-time password.** Alchemer's one-time password behavior should be verified before your study goes live: if the password is marked used only on survey **completion** (rather than on login click), a respondent who logs in and then abandons mid-survey could re-enter using the same token. Test this in your account with a dummy password before recruiting. If burn-on-click is not guaranteed, add a short server-side peek check or set a tight survey timeout so partial sessions cannot be exploited.
+</Note>
+
+## Why this beats the URL-variable approach
+
+The older pattern puts a `vyt` URL variable in the survey link and uses page-1 skip logic to screen out bad values. That approach has a structural problem: page 1 has already loaded by the time the check runs, so the respondent has seen at least one question before being rejected. Alchemer's Login/Password Action runs before any content page renders, so a bad or missing token gets an error screen and nothing else. It is a true gate enforced by the platform, not a soft filter inside the survey.
+
+## Trade-offs
+
+<CardGroup cols={2}>
+  <Card title="Strongest pre-content gate" icon="shield-check">
+    Login/Password is enforced by Alchemer's server before a single question loads. There is no way to skip past it through URL manipulation or browser back-navigation.
+  </Card>
+  <Card title="Requires token pre-loading" icon="table">
+    You must generate tokens and upload them to Alchemer before recruiting begins. If your sample grows mid-study, you need to add more tokens. Plan headroom into your initial batch.
+  </Card>
+  <Card title="No platform changes needed" icon="puzzle-piece">
+    The Login/Password Action is a standard Alchemer feature available on most plans. Your survey question flow is untouched; enforcement lives entirely in the access layer.
+  </Card>
+  <Card title="Burn timing needs verification" icon="clock">
+    The exact moment Alchemer marks a one-time password as consumed is worth confirming in your account. See the note above. If burn-on-click is not the default, factor in a server-side consume call at completion.
+  </Card>
+</CardGroup>
+
+## Token security
+
+The validation key you use for server-side peek and consume calls is a per-Flow **publishable** key (`pk_val_...`). It can check and burn tokens for its Flow but cannot create verifications, read PII, or touch anything outside that Flow. It is safe to store in an Alchemer webhook credential or a server-side environment variable.
+
+Do not skip authentication on your validation calls. An unauthenticated consume endpoint would let anyone guess token strings and burn them (denial of service) or probe whether a given string is valid (enumeration). The publishable key prevents both.
+
+Each token carries a TTL of roughly 30 minutes from the moment it is minted. Pre-load a comfortable buffer of tokens before recruiting and remind respondents to complete the survey in one session after their verification.
+
+## Uniqueness is the real lock
+
+Alchemer's gate enforces "this respondent has a valid token." VerifyYou's uniqueness check enforces something stronger: "this face has not passed this Flow before." A respondent who tries to verify twice gets a second token rejected at minting, not just at the survey door. Repeat-takers, professional survey farmers, and household members taking the same survey are stopped before they ever receive a token, regardless of how the gate is configured.
+
+## Related pages
+
+- [Choosing your flow](/choosing-your-flow) — decide which recruitment and enforcement pattern fits your study
+- [Recruitment: Prolific](/recruitment/prolific) — how to circulate the gated link on Prolific
+- [Survey: Qualtrics](/survey/qualtrics) — single-use personal links as an alternative true-gate approach
+- [Survey: Typeform](/survey/typeform) — soft-gate plus webhook as an alternative enforcement tier

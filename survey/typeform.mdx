@@ -1,0 +1,174 @@
+---
+title: "Typeform"
+description: "Gate a Typeform survey so only verified, unique humans can load and submit it, using a wrapper page plus a webhook that auto-deletes bad responses."
+---
+
+Typeform's native logic features can display a welcome screen and jump to an end screen, but neither constitutes a true gate: the welcome screen renders to everyone before any jump fires, so an unverified respondent still sees your survey. The setup below closes that gap with two layers working together: a wrapper page that blocks entry before the form ever loads, and a webhook that auto-deletes any response that slips through without a valid token.
+
+<Info>
+Typeform reaches the **soft gate + webhook** tier by default: bad respondents are caught the instant they submit and their response is deleted automatically. Pair it with a wrapper page (described below) to reach the **true gate** tier, where unverified people never see a single question.
+</Info>
+
+## How the two layers fit together
+
+The respondent flow looks like this:
+
+1. You recruit via Prolific, your own list, or any source. The link you distribute is your **wrapper page**, not the raw Typeform URL.
+2. The wrapper page initialises a VerifyYou check. The respondent does the ~20-second liveness selfie.
+3. On success, VerifyYou returns the respondent to your wrapper page with `?vyt=TOKEN&vyc=1` in the URL.
+4. Your wrapper page calls `GET /v3/survey/peek?vyt=TOKEN` server-side to confirm the token is valid and unused, then calls Typeform's `createWidget()` to render the form inline. An invalid token shows an error screen; the raw Typeform URL is never revealed.
+5. When the respondent submits, Typeform fires a webhook to your endpoint. You call `GET /v3/survey/peek?vyt=TOKEN` again to re-check, then `POST /v3/survey/consume?vyt=TOKEN` to burn it. If the token is missing or invalid, you call the Typeform Responses API to delete the response.
+
+The token is like a coat-check stub we mint and look up: it only matches if we made it, it is unused, it is for your study, and it has not expired (about 30 minutes TTL). You cannot guess one, and uniqueness means the same person cannot earn a second.
+
+## Step-by-step setup
+
+<Steps>
+  <Step title="Create your Flow and get your keys">
+    In the VerifyYou dashboard, create a Flow for this study. You will need two keys:
+
+    - A **publishable key** (`pk_...`) for your wrapper page backend to call `/v3/initialize`. This creates the verification session and must never be exposed to client-side JavaScript.
+    - A **publishable validation key** (`pk_val_...`) for peek and consume calls in both the wrapper page return handler and your webhook. This key is validate-only: it can check and burn tokens but cannot create new verifications and carries no PII, so it is safe to store in a server-side credential store.
+
+    Keep your secret `sk_...` key off the client entirely.
+  </Step>
+
+  <Step title="Build or host the wrapper page">
+    The wrapper page has two responsibilities: start the VerifyYou check, and render the Typeform only after the token clears.
+
+    **1. Start the check.** Call your own server endpoint, which calls:
+
+    ```http
+    POST /v3/initialize
+    Authorization: Bearer pk_YOUR_PUBLISHABLE_KEY
+
+    {
+      "verification_id": "YOUR_FLOW_ID",
+      "external_tracker": "study-typeform-june",
+      "pass_params": "respondent_id={{RID}}",
+      "origin": "https://your-wrapper.example.com",
+      "return_path": "/verify/return",
+      "start_path": "/verify/start"
+    }
+    ```
+
+    This returns `{ url }`. Redirect the respondent to that URL to start the liveness check. Note that `external_tracker` is echoed on webhooks only, not on the return URL. Use `pass_params` to carry participant identifiers (such as `PROLIFIC_PID` or `RID`) back on the return URL.
+
+    **2. Handle the return.** VerifyYou redirects back to `origin + return_path` with `?vyt=TOKEN&vyc=1` (or `vyc=0` for a failed check). On your server, peek the token using your validation key:
+
+    ```http
+    GET /v3/survey/peek?vyt=TOKEN
+    Authorization: Bearer pk_val_YOUR_VALIDATION_KEY
+    ```
+
+    A successful response looks like:
+
+    ```json
+    { "verified": true, "reason": "ok" }
+    ```
+
+    If `verified` is `true`, render the Typeform widget. If not, show a screen-out page.
+
+    **3. Render the form.** Pass the token into the embedded form as a hidden field so your webhook can retrieve it:
+
+    ```html
+    <div id="typeform-container"></div>
+    <script src="//embed.typeform.com/next/embed.js"></script>
+    <script>
+      window.tf.createWidget("YOUR_FORM_ID", {
+        container: document.getElementById("typeform-container"),
+        hidden: { vyt: "TOKEN_FROM_URL" }
+      });
+    </script>
+    ```
+
+    <Warning>
+      Never put the raw Typeform share URL in your recruitment message. If respondents have the raw URL they bypass the wrapper entirely. Distribute only the wrapper page URL.
+    </Warning>
+  </Step>
+
+  <Step title="Set up the webhook and auto-delete">
+    In Typeform, go to **Connect > Webhooks** and point it at your server endpoint.
+
+    When Typeform fires the webhook, the payload includes your hidden fields. Extract `vyt`, then peek the token using your validation key:
+
+    ```http
+    GET /v3/survey/peek?vyt=TOKEN
+    Authorization: Bearer pk_val_YOUR_VALIDATION_KEY
+    ```
+
+    If `verified` is `true`, consume the token to prevent reuse:
+
+    ```http
+    POST /v3/survey/consume?vyt=TOKEN
+    Authorization: Bearer pk_val_YOUR_VALIDATION_KEY
+    ```
+
+    If `verified` is `false` (missing token, invalid, expired, or already consumed), delete the response from Typeform immediately using your Typeform Personal Access Token:
+
+    ```http
+    DELETE /api.typeform.com/forms/FORM_ID/responses
+    Authorization: Bearer YOUR_TYPEFORM_PAT
+    Content-Type: application/json
+
+    { "included_response_ids": ["RESPONSE_ID"] }
+    ```
+
+    This is what turns the webhook from a notification into an auto-reject. The bad response never lands in your results CSV.
+
+    <Tip>
+      `peek` is idempotent and does not burn the token, so it is safe to call both at the wrapper stage and again at the webhook stage. Only `consume` is destructive.
+    </Tip>
+  </Step>
+
+  <Step title="Test end-to-end">
+    Use a VerifyYou test key in a staging environment. Walk through the full flow: verify as a real respondent, confirm the form loads, submit, and check that the response appears in Typeform. Then try loading the form without a valid token and confirm you see a screen-out. Try submitting a second time with the same (now consumed) token and confirm the webhook deletes the response.
+  </Step>
+</Steps>
+
+## Why the welcome-screen gate is not enough
+
+Typeform's built-in logic lets you show a welcome screen and jump to a disqualification end screen if a condition is not met. This is commonly used as an entry gate, but it does not work for token enforcement.
+
+The welcome screen renders to every respondent before any logic fires. There is no way to block page load based on a URL parameter: the respondent sees the first screen, Typeform evaluates the jump condition, and only then redirects to an end screen. By that point the form has loaded and nothing in Typeform can prevent a determined respondent from inspecting or sharing the URL. The webhook-plus-delete approach catches bad submissions at the server level, which the welcome screen cannot do.
+
+## Trade-offs at a glance
+
+<CardGroup cols={2}>
+  <Card title="Wrapper page (true gate)" icon="shield-check">
+    Unverified respondents never see a question. The raw Typeform URL is never distributed. Peek happens server-side before the widget loads. Best for sensitive surveys or high-incentive studies where even seeing the questions is a risk.
+  </Card>
+  <Card title="Webhook + delete only (soft gate)" icon="filter">
+    Simpler to set up: distribute the Typeform URL directly. Bad responses are auto-deleted on submit. The honest limit: respondents do see and answer questions before rejection. Fine for lower-stakes studies or when you control recruitment tightly.
+  </Card>
+  <Card title="Welcome-screen logic (not recommended)" icon="triangle-exclamation">
+    No real enforcement. The form loads before any jump fires. Does not prevent unverified respondents from seeing questions, and cannot perform a server-side token check. Use only as a UX hint, never as a gate.
+  </Card>
+  <Card title="Uniqueness is the real lock" icon="fingerprint">
+    Even with soft-gate enforcement, a respondent who failed verification cannot earn a second token. The repeat-taker problem is stopped at the VerifyYou layer, regardless of how strongly the survey enforces the token.
+  </Card>
+</CardGroup>
+
+## Frequently asked questions
+
+<AccordionGroup>
+  <Accordion title="What happens to the token if the respondent closes the browser mid-survey?">
+    The token is not consumed until your webhook calls `POST /v3/survey/consume`. If the respondent abandons the form and returns, their token is still valid (within the ~30-minute TTL) and the form will load again via the wrapper page.
+  </Accordion>
+  <Accordion title="Can I use the same token across multiple Typeform forms?">
+    No. A token is bound to one Flow and is single-use. If you run multiple surveys in one study, each needs its own Flow and each respondent needs a fresh token per survey.
+  </Accordion>
+  <Accordion title="What if the webhook fires but the token has already expired?">
+    `peek` will return `verified: false` with a reason indicating expiry. Treat this identically to any other invalid token: delete the response. This is rare if your form is short, but worth handling in your webhook code.
+  </Accordion>
+  <Accordion title="Do I need both peek and consume, or just consume?">
+    Both. `peek` at the wrapper stage lets you block entry before the form loads without burning the token (since the respondent might close the tab before submitting). `consume` at the webhook stage burns it so the same token cannot be submitted twice. Skipping `peek` at entry means unverified respondents can still load the form if they have a plausible-looking URL.
+  </Accordion>
+  <Accordion title="Is the publishable validation key safe to use in a server-side script?">
+    Yes. The `pk_val_...` key is validate-only: it can peek and consume tokens but cannot retrieve PII or create new verifications. It is safe to store in a server-side environment variable in your webhook handler or wrapper page backend. Do not use it in client-side JavaScript where it is visible to respondents.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+For recruitment setup, see [/recruitment/prolific](/recruitment/prolific) or [/recruitment/panels](/recruitment/overview). For a full walkthrough of the two-leg mental model, see [/choosing-your-flow](/choosing-your-flow).

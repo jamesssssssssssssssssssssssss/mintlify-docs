@@ -1,0 +1,133 @@
+---
+title: "CloudResearch Connect"
+description: "Add a deepfake-resistant human verification gate to a CloudResearch Connect study using the VerifyYou gated link and Partial Completes."
+---
+
+CloudResearch Connect routes participants from its own panel to your survey. The VerifyYou check sits in the middle: participants click your Connect project link, do the ~20-second liveness selfie, and only land in your survey if they pass. If they fail, you need to send them back to CloudResearch with the Partial Completes URL so the platform registers the event correctly and you can handle pay accordingly.
+
+## How the two legs fit together
+
+The **recruitment leg** is CloudResearch Connect. It decides where you paste the gated link and what a failure costs the participant.
+
+The **survey leg** is whatever survey tool you have attached to the project. It enforces the token once the participant arrives.
+
+The two legs never talk to each other directly. They only meet at the VerifyYou gated link in the middle.
+
+## Prerequisites
+
+- A VerifyYou account with a Flow created for this study.
+- A CloudResearch Connect project with Partial Completes enabled (required, see Step 2).
+- Your survey tool configured and producing a working survey link.
+
+## Setup
+
+<Steps>
+  <Step title="Get the VerifyYou gated link for your Flow">
+    In the VerifyYou dashboard, open your Flow and copy the no-code share link. It looks like:
+
+    ```
+    app.verifyyou.com/verification/FLOW_ID
+    ```
+
+    This is the URL you will paste into the Connect project as the survey link. Do not paste your survey tool URL directly into Connect.
+  </Step>
+
+  <Step title="Enable Partial Completes in your Connect project">
+    In the Connect project settings, turn on **Partial Completes**. This lets you send participants back to CloudResearch with a partial-complete URL instead of leaving them stranded when they fail verification.
+
+    Once you enable this, CloudResearch will show you a partial-complete redirect URL for the project. Copy it. You will need it in the next step.
+  </Step>
+
+  <Step title="Handle failed verifications">
+    A dedicated failure redirect field in the VerifyYou dashboard is on the build list but is not yet live. Until it is available, handle failed verifications like this:
+
+    - Configure your Flow's return page to show a clear end-of-study message for participants who do not pass.
+    - Contact CloudResearch support to report failed-verification screen-outs manually, or instruct participants in your study description to return to CloudResearch and use the provided exit link.
+
+    <Note>
+      Check your dashboard before launch. When the failure redirect field becomes available, you will be able to paste the CloudResearch partial-complete URL directly into it, and participants who fail liveness or uniqueness will be forwarded there automatically.
+    </Note>
+  </Step>
+
+  <Step title="Pass the participant ID through the flow">
+    VerifyYou returns whatever you pass in `pass_params` back on the success return URL, so your survey tool receives the participant identifier automatically.
+
+    Append `participantId` (case-sensitive, exactly this casing) to the gated link you paste into Connect:
+
+    ```
+    app.verifyyou.com/verification/FLOW_ID?participantId={{participantId}}
+    ```
+
+    CloudResearch injects the actual value at click time via its `{{participantId}}` template variable. VerifyYou then echoes it as a query parameter on the return URL so your survey tool can record it alongside the response.
+
+    <Warning>
+      `participantId` is case-sensitive in the `pass_params` mapping. If you use a different casing, the parameter will not be echoed on the return URL.
+    </Warning>
+  </Step>
+
+  <Step title="Paste the gated link into your Connect project">
+    In the Connect project, set the **Survey URL** to the gated link you built in Steps 1 and 4. CloudResearch will send participants there instead of directly to your survey.
+
+    Your final link should look like:
+
+    ```
+    app.verifyyou.com/verification/FLOW_ID?participantId={{participantId}}
+    ```
+  </Step>
+
+  <Step title="Configure your survey tool's entry gate">
+    When a participant passes verification, VerifyYou returns them to your survey with `?vyt=TOKEN&vyc=1` appended to the return URL you configured in your Flow.
+
+    At the survey entry point, call:
+
+    ```
+    GET /v3/survey/peek?vyt=TOKEN
+    ```
+
+    with an `Authorization: Bearer pk_val_FLOW_RAND` header. A `verified: true` response means the token is real, unused, for this Flow, and not expired. Redirect or screen out anyone who does not pass.
+
+    When a real completion is accepted, call:
+
+    ```
+    POST /v3/survey/consume?vyt=TOKEN
+    ```
+
+    to burn the token so it cannot be reused.
+
+    See [/survey/qualtrics](/survey/qualtrics), [/survey/alchemer](/survey/alchemer), or your platform's page for tool-specific setup.
+  </Step>
+</Steps>
+
+## Pay policy: what to tell CloudResearch about the screen-out
+
+CloudResearch's policy distinguishes between two kinds of screen-outs:
+
+- **Ineligibility-based screen-outs** (participant does not qualify for your study) require partial pay.
+- **Failed attention or quality checks** may be compensated at $0.
+
+The VerifyYou check is an authenticity and uniqueness gate, analogous to a quality check. If you frame it that way in your project description, a $0 screen-out for a failed verification may be permissible under their current policy.
+
+<Warning>
+  Confirm this against CloudResearch's current policy before you go live. Platform policies change, and what is permissible for attention checks is not guaranteed to extend to third-party verification gates. If in doubt, offer partial pay for failed verifications to stay clearly within policy.
+</Warning>
+
+## Trade-offs
+
+<CardGroup cols={2}>
+  <Card title="True gate for every entry" icon="shield-check">
+    Every participant does the liveness selfie before they see a single question. There is no bypass and no post-hoc cleanup needed.
+  </Card>
+  <Card title="Uniqueness across the panel" icon="fingerprint">
+    The same person cannot earn a second token. Repeat takers are stopped even if they use a different account or device, because the uniqueness check is face-based, not account-based.
+  </Card>
+  <Card title="Failure redirect requires manual workaround for now" icon="triangle-exclamation">
+    The dashboard field that would automatically forward failed participants to the CloudResearch partial-complete URL is not yet live. Until it ships, failed verifications need to be handled with a message page and manual coordination with CloudResearch.
+  </Card>
+  <Card title="Pay policy ambiguity" icon="circle-question">
+    The $0 screen-out case for failed verifications depends on CloudResearch's current interpretation of their quality-check policy. Confirm before launch or budget for partial pay on every failure.
+  </Card>
+</CardGroup>
+
+## The token in plain terms
+
+When a participant passes the selfie, VerifyYou mints a random opaque string and records it in our database as "real, unused, for this Flow, expiring in about 30 minutes." That string rides to your survey as `?vyt=TOKEN` in the URL. When your survey or webhook hands it back to us with a `peek` call, we look it up: is it real? unused? for this Flow? unexpired? Only "yes to all four" passes. It cannot be guessed and it cannot be earned a second time by the same face, so a repeat taker never gets a valid token to hand in.

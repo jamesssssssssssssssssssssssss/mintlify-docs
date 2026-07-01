@@ -1,0 +1,122 @@
+---
+title: "Choosing your flow"
+description: "How to combine any recruitment leg with any survey leg using one shared shape: link, check, forward or screen out, token enforced."
+---
+
+Every VerifyYou integration is the same shape. Once you see it, you stop thinking about "which integration do I use" and start thinking about two independent choices: where your respondents come from, and where they land after the check.
+
+## The shape, every time
+
+<Steps>
+  <Step title="Respondents click your gated link">
+    Instead of sending a direct survey link, you send (or embed) a VerifyYou link. This is either the no-code share link from your dashboard or a `POST /v3/initialize` URL your system generates. The link records where to send the respondent when the check finishes.
+  </Step>
+  <Step title="The liveness and uniqueness check runs">
+    The respondent completes a roughly 20-second selfie at `app.verifyyou.com`. We run liveness (a real human, not a recording or a mask) and uniqueness (we have not seen this exact face before in your study). One face, one token.
+  </Step>
+  <Step title="Forward or screen out">
+    On pass, we redirect to your survey with `?vyt=TOKEN&vyc=1` appended. Any participant ID you passed in (say, a Prolific PID) rides along in the return URL via `pass_params`. On fail, we show a screen-out page. A failure redirect URL to a platform of your choice is on the roadmap but does not exist yet.
+  </Step>
+  <Step title="The token is enforced">
+    Your survey platform, webhook, or code checks the token. The strength of that check is what you are choosing when you pick a survey leg.
+  </Step>
+</Steps>
+
+<Note>
+The two legs never talk to each other. They only touch our gated link in the middle. That is why any recruitment leg works with any survey leg: you are not wiring them together, you are each connecting to us.
+</Note>
+
+---
+
+## The two choices
+
+### Recruitment leg: where respondents start
+
+The recruitment leg sets the **cost of a rejection**. If a respondent fails the check on Prolific, Prolific counts it as a screen-out and pays them nothing (or a small flat fee). If you cold-emailed them, the cost is lower. The leg itself does not change the check; it changes what happens to a failing respondent upstream.
+
+| Option | Rejection cost | How you use the gated link |
+|---|---|---|
+| Prolific | Screen-out, respondent earns nothing | Paste as the study URL; add `?PROLIFIC_PID={{%PROLIFIC_PID%}}` to carry the ID through |
+| MTurk | HIT is not completable | Use as the external URL in your HIT |
+| Panel / agency | Panel removes the respondent | Send the link as your entry URL |
+| Your own list | Low, you emailed them | Share the link directly or embed it |
+| Organic / social | Very low | Post or embed the link |
+
+See [Recruitment options](/recruitment/overview) for platform-specific setup.
+
+### Survey leg: where respondents land
+
+The survey leg sets the **strength of the lock**. This is really a question of when a bad respondent is caught, not whether.
+
+| Tier | When caught | How |
+|---|---|---|
+| True gate | Before any question loads | Single-use personal links, login/password, MTurk qualification, or a researcher-hosted wrapper page that calls `GET /v3/survey/peek` before rendering |
+| Soft gate + webhook | The instant they submit | Platform webhook calls `GET /v3/survey/peek`; bad responses are auto-deleted via the platform API before they ever reach your CSV |
+| Direct call | Before your own server saves | Your code calls `GET /v3/survey/peek`, then `POST /v3/survey/consume` on a real completion |
+
+See [Survey platform guides](/survey/overview) for per-platform setup.
+
+---
+
+## Worked combinations
+
+### 1. Prolific + Qualtrics (the gold standard)
+
+This is the tightest setup. Nobody unverified ever loads a question.
+
+- Set your Prolific study URL to the VerifyYou gated link with `?PROLIFIC_PID={{%PROLIFIC_PID%}}` appended.
+- In the VerifyYou dashboard, set the return path to your Qualtrics **Secure External URL** (which accepts query parameters) or a single-use personal link imported via the Qualtrics Contacts panel.
+- Qualtrics single-use personal links are consumed on first load. A respondent who fails the check never receives one, so there is no URL for them to visit.
+
+Result: true gate. The verified token is bound to the link itself; a stolen or shared link does not help because the person who earned it is already recorded.
+
+<Note>
+If you use Qualtrics Web Services to validate the token at survey start rather than single-use personal links, be aware of a timing edge case: the Web Service call fires after the survey page loads, so there is a brief window where the first question may render before the check returns. Single-use personal links avoid this entirely and are the recommended approach.
+</Note>
+
+### 2. Prolific + Tally (the common case)
+
+Tally does not support single-use entry credentials, so you reach a true gate a different way and add a webhook backstop.
+
+- Set the Prolific study URL to your VerifyYou gated link.
+- In the VerifyYou dashboard, point the return path to a small wrapper page you host (a few lines of JS or a Vercel edge function). The wrapper calls `GET /v3/survey/peek?vyt=TOKEN` before it redirects to the Tally form. Anyone without a valid token sees an error page instead of the form.
+- As a backstop, configure a Tally webhook. On every submission the webhook calls `GET /v3/survey/peek` to validate, then `POST /v3/survey/consume` to burn the token. Invalid responses are deleted via the Tally API before they reach your export.
+
+Result: true gate at the wrapper, soft-gate auto-delete as a backstop. The wrapper blocks unverified entry; the webhook catches any edge case and burns the token on a legitimate completion so it cannot be reused.
+
+### 3. Your own list + Formspark (the lightest)
+
+You are emailing a small list. The respondents are lower-risk than a crowdwork panel, and you own the form infrastructure.
+
+- Email respondents the VerifyYou share link (no-code, from the dashboard). Set the success redirect to your Formspark form URL.
+- In your Formspark submission handler, read the `vyt` query parameter that VerifyYou appended to the return URL and pass it as a hidden field.
+- On the server side, before Formspark saves the submission, call `GET /v3/survey/peek?vyt=TOKEN` with your `pk_val_` key in the `Authorization` header. If `verified` is false, reject the submission. On success, call `POST /v3/survey/consume` to burn the token.
+
+Result: direct-call enforcement. The form never saves a bad response. Because `peek` is idempotent and does not burn the token, you can call it from a progress-save webhook earlier in the flow without worrying about burning the token prematurely. `consume` is called exactly once, when a real completion is accepted.
+
+---
+
+## Mixing and matching
+
+<CardGroup cols={2}>
+  <Card title="Any recruitment leg" icon="shuffle">
+    Prolific, MTurk, your own list, a panel, organic traffic. The check is the same regardless. You only change where the gated link lives and what a failure costs the respondent.
+  </Card>
+  <Card title="Any survey leg" icon="lock">
+    Qualtrics, Tally, Typeform, Jotform, Google Forms, your own app, Formspark. The enforcement tier is determined by what the platform supports, not by anything on our side.
+  </Card>
+</CardGroup>
+
+Because the two legs only ever connect through our gated link, swapping one end does not require changing the other. A Prolific study can migrate from Qualtrics to Tally without touching the Prolific study URL. A Tally form can switch from an organic share link to Prolific without touching the Tally webhook.
+
+<Tip>
+Start by choosing the survey leg first. That tells you the enforcement tier you will get. Then pick the recruitment leg that matches the rejection cost you want. The combination you land on is your flow.
+</Tip>
+
+---
+
+## The honest catch
+
+The token is a claim ticket, not a cryptographic proof tied to the survey session. We mint it when the check passes, and we look it up when someone presents it. What we cannot control is the window between "check passed" and "token checked by your survey." In a true-gate setup that window is zero: the token is validated before a single question loads. In a webhook setup the respondent sees the form, completes it, and the bad response is deleted before it lands in your CSV, but the respondent did experience the form. For most research use cases the webhook outcome is equivalent: no bad data reaches your analysis.
+
+The uniqueness check is what makes the token meaningful beyond "a live human clicked." The same person cannot earn a second token for the same study, so even a weak enforcement tier stops the repeat-taker, the problem academic researchers actually care about most.

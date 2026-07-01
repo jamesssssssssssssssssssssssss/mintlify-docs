@@ -1,0 +1,100 @@
+---
+title: "Amazon Mechanical Turk"
+description: "Gate your MTurk HITs so only verified, unique humans can work them, using a custom Qualification as a true entry barrier."
+---
+
+MTurk is the one platform where the strongest enforcement option is also the cheapest. A custom Qualification acts as a true gate: non-verified workers never see your main HIT, and a returned HIT costs you nothing in fees. The verification check happens once, the Qualification persists on the worker's account, and repeat takers are blocked because they cannot earn a second VerifyYou token.
+
+## How the Qualification flow works
+
+The recruitment leg starts on MTurk; the survey leg is wherever your main HIT lives. The two are joined by a short, low-cost verification HIT that sits in the middle.
+
+<Steps>
+  <Step title="Create the VerifyYou Verified qualification">
+    We create a custom Qualification in your requester account via the MTurk Requester API, named something like "VerifyYou Verified - Study XYZ". It is non-assignable by workers; only your account can grant it. We give you the `QualificationTypeId` you need for the next steps, or you can look it up in your MTurk Requester console.
+  </Step>
+  <Step title="Post a short verification HIT">
+    Create a HIT with a low reward (typically $0.05 to $0.10, enough to attract workers but not your real incentive). Set the HIT URL to your VerifyYou gated link:
+
+    ```
+    https://app.verifyyou.com/verification/YOUR_VERIFICATION_ID
+    ```
+
+    MTurk automatically appends `workerId`, `assignmentId`, `hitId`, and `turkSubmitTo` as query parameters when a worker opens an external URL HIT. Pass these through using the `pass_params` field when you initialize the session, so they ride back on your return URL alongside the token.
+
+    Your `/v3/initialize` call for this HIT should look roughly like:
+
+    ```json
+    {
+      "verification_id": "your-verification-id",
+      "external_tracker": "mturk-qual-batch-01",
+      "pass_params": ["workerId", "assignmentId", "hitId"],
+      "origin": "https://your-completion-page.example.com",
+      "return_path": "/mturk/complete"
+    }
+    ```
+
+    `external_tracker` is echoed on webhooks (not on the return URL), which is how you match a completion back to a specific batch. The `pass_params` values are what travel with the respondent back to your `origin` + `return_path`.
+  </Step>
+  <Step title="On pass: VerifyYou submits the HIT and grants the Qualification">
+    When a worker passes the liveness and uniqueness check, VerifyYou uses the `turkSubmitTo` value MTurk appended to submit the verification assignment on the worker's behalf, and grants your Qualification to that `workerId` via the MTurk API.
+
+    The worker is then returned to your `origin` + `return_path` with `?vyt=TOKEN&vyc=1` plus the `pass_params` you passed through (including `workerId` and `assignmentId`).
+
+    If you want to confirm the token on your completion page, make a server-side peek call:
+
+    ```
+    GET /v3/survey/peek?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    This is idempotent and does not burn the token. It returns `{ verified, reason }`. Workers who fail (`vyc=0`) return the HIT for free. You pay nothing for a failed verification.
+  </Step>
+  <Step title="Post your main HIT with the Qualification requirement">
+    Create your real survey or task HIT and add a `QualificationRequirement` that the worker must hold your VerifyYou Verified qualification:
+
+    ```json
+    {
+      "QualificationTypeId": "your-qual-type-id",
+      "Comparator": "EqualTo",
+      "IntegerValues": [1],
+      "ActionsGuarded": "DiscoverPreviewAndAccept"
+    }
+    ```
+
+    Setting `ActionsGuarded` to `DiscoverPreviewAndAccept` means non-qualified workers cannot find, preview, or accept the HIT at all. The verification wall is invisible to them.
+  </Step>
+</Steps>
+
+<Note>
+The Qualification is a true gate, not a soft one. A worker with no token never reaches your survey questions. There is no after-the-fact deletion step needed, and no CSV cleanup.
+</Note>
+
+## Simpler mode: paste the gated link directly as the HIT
+
+If you do not want to use the Qualification setup, you can post a single HIT whose external URL is the VerifyYou gated link. Workers who pass are redirected to your survey. Workers who fail return the HIT for free.
+
+This is still useful, but weaker than the Qualification approach for one reason: your main survey link is visible to anyone who accepts the HIT, so a worker who fails the check could theoretically navigate to it independently if your survey has no entry enforcement. Pair this mode with at least a token check at the start of your survey (see [Qualtrics](/survey/qualtrics) for an example, or use `POST /v3/survey/consume` on submission) to close that gap.
+
+## Trade-offs
+
+<CardGroup cols={2}>
+  <Card title="Qualification flow" icon="shield-check">
+    True gate: non-verified workers never see your HIT. Failed verifications return the cheap HIT for free, no cost to you. We handle the Qualification grant automatically on pass. Best for any study where panel purity matters most.
+  </Card>
+  <Card title="Direct link HIT" icon="link">
+    No Qualification setup required. Paste the gated link, post the HIT, done. Workers who fail return it free. Weaker entry control if your destination survey has no independent token check. Good for quick pilots or studies where you add a webhook on the survey side.
+  </Card>
+</CardGroup>
+
+## Why uniqueness is what actually protects your data
+
+A worker can share a qualification code, but they cannot share a VerifyYou token bound to their face. The same person cannot earn a second token from the same study, because the uniqueness check recognises them and declines. This stops the repeat-taker and the professional survey-farmer at the source, before they touch your data, rather than catching them in a post-hoc dedup pass.
+
+The honest catch: the roughly 30-minute token TTL means a worker should proceed from the verification HIT to the main HIT promptly. If they accept the main HIT long after verifying, the token in their return URL will have expired. The Qualification itself does not expire, so the gate still holds; you just cannot re-check the token server-side after that window. For most MTurk workflows the gap between earning the Qualification and starting the main HIT is well inside 30 minutes.
+
+## Related pages
+
+- [Choosing your flow](/choosing-your-flow) for a full comparison of recruitment and survey leg combinations.
+- [Prolific](/recruitment/prolific) if you want a managed panel with built-in completion tracking.
+- [Qualtrics](/survey/qualtrics) for guidance on enforcing the token at the survey entry point.

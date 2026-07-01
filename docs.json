@@ -1,34 +1,75 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "VerifyYou",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
+    "primary": "#34A853",
+    "light": "#4ADE80",
     "dark": "#15803D"
   },
   "favicon": "/favicon.svg",
   "navigation": {
     "pages": [
       {
-        "group": "Getting Started",
+        "group": "Get started",
         "pages": [
           "index",
           "quickstart"
+        ]
+      },
+      {
+        "group": "Understand it",
+        "pages": [
+          "how-it-works",
+          "the-token",
+          "platform-tiers",
+          "choosing-your-flow"
+        ]
+      },
+      {
+        "group": "Recruitment platforms",
+        "pages": [
+          "recruitment/overview",
+          "recruitment/prolific",
+          "recruitment/mturk",
+          "recruitment/cloudresearch",
+          "recruitment/cint-lucid"
+        ]
+      },
+      {
+        "group": "Survey platforms",
+        "pages": [
+          "survey/overview",
+          "survey/qualtrics",
+          "survey/alchemer",
+          "survey/typeform",
+          "survey/jotform",
+          "survey/tally",
+          "survey/surveymonkey",
+          "survey/google-forms",
+          "survey/formspark"
+        ]
+      },
+      {
+        "group": "Build spec (for us)",
+        "pages": [
+          "build/architecture",
+          "build/validate-endpoint",
+          "build/what-we-build"
         ]
       }
     ],
     "global": {
       "anchors": [
         {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
+          "anchor": "Dashboard",
+          "href": "https://platform.verifyyou.com",
+          "icon": "gauge"
         },
         {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
+          "anchor": "API reference",
+          "href": "https://docs.verifyyou.com",
+          "icon": "code"
         }
       ]
     }
@@ -41,13 +82,13 @@
     "links": [
       {
         "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "href": "mailto:hi@verifyyou.com"
       }
     ],
     "primary": {
       "type": "button",
       "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "href": "https://platform.verifyyou.com"
     }
   },
   "contextual": {
@@ -55,18 +96,13 @@
       "copy",
       "view",
       "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
+      "claude"
     ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "x": "https://x.com/verifyyou",
+      "linkedin": "https://linkedin.com/company/verifyyou"
     }
   }
 }

@@ -1,0 +1,163 @@
+---
+title: "Cint and Lucid (panels)"
+description: "Connect VerifyYou to Cint or Lucid panel traffic, including S2S postback handling for in-app webviews where browser redirects are unreliable."
+---
+
+Panel routers like Cint and Lucid send respondents through in-app webviews on mobile devices. Browser-redirect-based dispositions (the link you paste into a "failure URL" field) frequently fail in that environment because the webview may not follow the redirect or may close before it fires. The reliable signal is a **Server-to-Server (S2S) postback**: your server calls Cint's or Lucid's update endpoint directly once you know the outcome, independent of what the respondent's browser does.
+
+The VerifyYou check sits between the panel entry link and your survey. Respondents who pass carry a token forward. Respondents who fail trigger a screenout postback from your server, not a browser redirect.
+
+<Note>
+Terminates (screenouts) are free on Cint and Lucid. Only completes are charged. Screening out a failed respondent costs nothing and does not affect your complete rate.
+</Note>
+
+## How the flow is shaped
+
+There are two independent legs joined by the VerifyYou check in the middle. The panel (Cint or Lucid) is the recruitment leg; your survey tool is the survey leg. Neither touches the other directly.
+
+The panel generates an entry link containing a `RID` placeholder (Cint uses `[%RID%]`; Lucid uses `{{RID}}`). You replace the destination in that link with your VerifyYou-initialized URL, carrying the `RID` through so it rides along for the entire session.
+
+## Steps
+
+<Steps>
+  <Step title="Initialize the session">
+    Call `POST /v3/initialize` from your server when the respondent arrives, or pre-initialize a batch and embed the resulting URLs directly in the panel link.
+
+    Pass the RID as part of `pass_params` so it returns on the redirect URL alongside the token. Note that `external_tracker` is echoed on webhooks only, not on the return URL.
+
+    ```json
+    POST /v3/initialize
+    {
+      "verification_id": "vfy_YOURFLOWID",
+      "external_tracker": "cint-study-42",
+      "pass_params": { "RID": "[%RID%]" },
+      "origin": "https://yourserver.com",
+      "return_path": "/verify-return",
+      "start_path": "/survey"
+    }
+    ```
+
+    The response contains a `url` pointing to `app.verifyyou.com/v/SESSION`. That is the link the respondent clicks or is redirected to from the panel.
+  </Step>
+
+  <Step title="Optionally validate the session with Cint S2S">
+    Cint provides an S2S validate endpoint you can call from your server after the respondent arrives and before the liveness check begins. This confirms the session is live on Cint's side and gives you an early opportunity to report a screenout if something looks wrong (for example, a duplicate RID).
+
+    This step is optional but recommended if Cint requires a disposition signal on all entries and you want the earliest possible hook. Confirm the exact endpoint URL with your Cint account team, as it is study-specific.
+  </Step>
+
+  <Step title="Respondent completes the liveness check">
+    The respondent does the ~20-second liveness selfie at `app.verifyyou.com/v/SESSION`. We run liveness and uniqueness. On finish we send them back to `origin + return_path` with:
+
+    - `?vyt=TOKEN`, the single-use verification token
+    - `vyc=1` (verified) or `vyc=0` (not verified)
+    - Any fields from `pass_params`, including `RID`
+
+    Your return endpoint reads all three.
+  </Step>
+
+  <Step title="Check the outcome and branch">
+    At your return endpoint, check `vyc`:
+
+    - `vyc=1`: peek at the token to confirm it is valid, then forward the respondent to your survey with `?vyt=TOKEN&RID=...` in the URL.
+    - `vyc=0`: do not forward. Call the Cint or Lucid S2S postback to report a screenout (see the next step). Do not rely on a browser redirect here.
+
+    ```http
+    GET /v3/survey/peek?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    Response: `{ "verified": true, "reason": "ok" }`. If `verified` is false, treat the respondent as a screenout even if `vyc` was 1 (the token may have expired or been tampered with).
+  </Step>
+
+  <Step title="Report a screenout via S2S postback">
+    For any respondent who did not pass, call the panel's S2S update endpoint **from your server**. Do not use a browser redirect for this; it will not fire reliably in webviews.
+
+    Cint S2S endpoint (confirm with Cint for your study's exact URL):
+
+    ```
+    GET https://[cint-s2s-endpoint]?rid={RID}&disposition=terminate
+    ```
+
+    Lucid S2S endpoint:
+
+    ```
+    GET https://[lucid-s2s-endpoint]?supplier_id=XXXX&rid={RID}&status=terminate
+    ```
+
+    Both calls come from your server, carrying the `RID` you retained from the return URL.
+  </Step>
+
+  <Step title="Enforce the token in your survey">
+    Your survey's entry point checks the token before any questions load (true gate) or the instant the respondent submits (soft gate with webhook). See [Choosing your enforcement tier](/choosing-your-flow) and the specific page for your survey tool.
+
+    When a real completion is accepted, burn the token:
+
+    ```http
+    POST /v3/survey/consume?vyt=TOKEN
+    Authorization: Bearer pk_val_FLOW_RAND
+    ```
+
+    A consumed token returns `{ "consumed": true }` and cannot be used again.
+  </Step>
+</Steps>
+
+## Why S2S postback, not a redirect
+
+Panel respondents on mobile often arrive inside a social-app webview (Facebook, Instagram, TikTok). Those webviews may:
+
+- Ignore or swallow a 3xx redirect silently
+- Close before the redirect fires
+- Block cross-origin navigation in certain states
+
+A server-to-server postback bypasses the browser entirely. Your server fires the signal to Cint or Lucid the moment you know the outcome, regardless of what the respondent's device does next. This is the same reason we recommend checking `vyc` and calling `peek` on your server rather than trusting client-side behavior.
+
+## The token as a claim ticket
+
+When a respondent passes, we mint a random opaque string and record it as "real, unused, for this study, expires in about 30 minutes." That token rides in the URL to your survey. When your survey checks it via `peek` or `consume`, it hands the ticket back to us and we look it up: did we mint it? Is it unused? Does it belong to this study? Is it still within the TTL?
+
+A bad respondent cannot fake a token because only we mint them. A repeat respondent cannot earn a second one because uniqueness is part of the liveness check: we have already seen that face. Even if someone shares a passing URL with a friend, the token is single-use and bound to one Flow, so a second attempt to consume it will fail.
+
+<Note>
+The `Authorization: Bearer pk_val_FLOW_RAND` key is a publishable validation key. It can check and burn tokens for one Flow only, carries no PII, and cannot create sessions or access other data. It is safe to store in a survey tool's server-side credential store. Do not skip authentication entirely: an unauthenticated `consume` endpoint would allow any caller to burn tokens (denial-of-service) and probe for valid token strings (enumeration oracle).
+</Note>
+
+## Trade-offs
+
+<CardGroup cols={2}>
+  <Card title="True gate via wrapper page" icon="shield-check">
+    Host a thin server page that calls `peek` before rendering the survey link. A respondent with a bad token never sees the survey URL. Strongest enforcement: no bypass path exists.
+  </Card>
+  <Card title="Soft gate via webhook" icon="webhook">
+    Forward the respondent to the survey immediately; your survey platform's webhook calls `peek` on submit and deletes bad responses via the platform API. Respondents enter but bad responses never reach your CSV or get counted as completes.
+  </Card>
+  <Card title="S2S postback for screenouts" icon="server">
+    Report terminates from your server, not from the browser. Reliable in webviews. Terminates are free; only completes cost you quota.
+  </Card>
+  <Card title="Honest catch: webview timing" icon="triangle-exclamation">
+    If the respondent closes the webview during the liveness check itself, the session never returns to your server and you have no outcome signal. This is not unique to VerifyYou; any mid-flow drop is invisible to the panel until a S2S signal arrives. Consider session timeouts if Cint or Lucid requires a disposition on all entries.
+  </Card>
+</CardGroup>
+
+## Passing the RID through
+
+The panel appends its `RID` to your entry link automatically when you use their placeholder syntax. Include it in `pass_params` when you initialize so VerifyYou echoes it back on the return URL. From there your return endpoint reads it from the query string and uses it in both the survey forward URL and any S2S postback call.
+
+```
+Panel entry link:
+https://yourserver.com/start?RID=[%RID%]
+
+Your /start endpoint initializes with pass_params: { "RID": RID_from_query }
+
+Return URL your server receives:
+https://yourserver.com/verify-return?vyt=TOKEN&vyc=1&RID=abc123
+
+Survey forward URL:
+https://yoursurvey.com/s/STUDYID?vyt=TOKEN&RID=abc123
+```
+
+## Related pages
+
+- [Prolific](/recruitment/prolific) for a platform with a built-in completion URL that handles dispositions differently
+- [Qualtrics](/survey/qualtrics) for true-gate enforcement via single-use personal links
+- [Choosing your enforcement tier](/choosing-your-flow) for a full comparison of when bad respondents are caught

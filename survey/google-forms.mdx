@@ -1,0 +1,178 @@
+---
+title: "Google Forms"
+description: "Add deepfake-resistant human verification to a Google Form using a prefill URL and an Apps Script trigger that auto-deletes invalid responses."
+---
+
+Google Forms is not capture-only. With a one-time Apps Script setup, invalid tokens are caught when a respondent submits and the response is deleted automatically. The flow is: respondents arrive from your recruitment link already carrying their token, a short-answer field captures it, and a server-side trigger validates it and removes bad submissions. There is a brief window between submission and deletion, but in practice bad responses rarely survive long enough to appear in a linked spreadsheet.
+
+<Note>
+You need the installable Apps Script trigger described in Step 3. The built-in response validation in Step 2 is client-side only and can be bypassed. The script is the real enforcement layer.
+</Note>
+
+## How the two legs connect
+
+Your recruitment link (Prolific, Qualtrics, your own email, wherever respondents start) sends them through the VerifyYou check first. On a passing check, VerifyYou forwards the respondent to your Google Form with the token already in the URL as `?vyt=TOKEN`. The form captures it, the respondent completes the questions, and the Apps Script trigger checks the token on submission. A bad token means the response is deleted. A good token means it stays.
+
+## Setup
+
+<Steps>
+  <Step title="Add a short-answer field for the token">
+    Add a short-answer question to your form. Title it something like "Verification token" and mark it required. This field will be filled automatically via the prefill URL, so respondents never see a blank box.
+
+    To generate the prefill URL, open your form, click the three-dot menu, choose "Get pre-filled link", paste a placeholder value into the token field, and copy the resulting URL. It will look like:
+
+    ```
+    https://docs.google.com/forms/d/e/FORM_ID/viewform?usp=pp_url&entry.XXXXXXX=PLACEHOLDER
+    ```
+
+    Replace `PLACEHOLDER` with `{vyt}` and give that URL to VerifyYou as your `return_path`. VerifyYou appends `?vyt=TOKEN` and `?vyc=1` (or `0` on failure) to the return URL, and `pass_params` carries your participant identifier back as additional query parameters. You will need to merge the token field and the participant ID field into a single prefill URL, for example:
+
+    ```
+    https://docs.google.com/forms/d/e/FORM_ID/viewform?entry.XXXXXXX={vyt}&entry.YYYYYYY={PROLIFIC_PID}
+    ```
+
+    Check the exact `entry.*` parameter names against your own pre-filled link.
+  </Step>
+
+  <Step title="Add response validation on the token field">
+    Select the token field, open field settings (the three-dot menu on the field), and choose "Response validation". Set the rule to "Regular expression" matching:
+
+    ```
+    ^vyt_[A-Za-z0-9_-]{20,}$
+    ```
+
+    This blocks a completely blank or obviously malformed value at the browser before the form submits. It is client-side only, so a determined respondent could remove it, but it catches accidents and bad prefill wiring early.
+
+    <Warning>
+    Do not rely on this regex alone. It does not call VerifyYou. A respondent could type any string matching the pattern and pass the browser check. The Apps Script trigger in the next step is where real enforcement happens.
+    </Warning>
+  </Step>
+
+  <Step title="Install the Apps Script trigger">
+    Open your form, click the three-dot menu, and choose "Script editor". This opens the bound Apps Script project for your form.
+
+    Paste the snippet below, replacing the placeholder values:
+
+    ```javascript
+    const VY_PEEK_URL = "https://app.verifyyou.com/v3/survey/peek";
+    const VY_KEY = "pk_val_YOUR_FLOW_KEY"; // your per-Flow publishable validation key
+    const TOKEN_FIELD_TITLE = "Verification token"; // must match the title of your token field exactly
+
+    function onFormSubmit(e) {
+      const response = e.response;
+      const answers = response.getItemResponses();
+
+      // Find the token field by its title
+      let token = "";
+      for (const answer of answers) {
+        if (answer.getItem().getTitle() === TOKEN_FIELD_TITLE) {
+          token = answer.getResponse();
+          break;
+        }
+      }
+
+      if (!token) {
+        response.getForm().deleteResponse(response.getId());
+        return;
+      }
+
+      const result = UrlFetchApp.fetch(
+        `${VY_PEEK_URL}?vyt=${encodeURIComponent(token)}`,
+        {
+          method: "get",
+          headers: { Authorization: `Bearer ${VY_KEY}` },
+          muteHttpExceptions: true,
+        }
+      );
+
+      if (result.getResponseCode() !== 200) {
+        response.getForm().deleteResponse(response.getId());
+        return;
+      }
+
+      const body = JSON.parse(result.getContentText());
+      if (!body.verified) {
+        response.getForm().deleteResponse(response.getId());
+        return;
+      }
+
+      // Token is valid. Optionally burn it now to prevent reuse.
+      // If you burn here, remove the consume call from any downstream webhook.
+      // UrlFetchApp.fetch(
+      //   `https://app.verifyyou.com/v3/survey/consume?vyt=${encodeURIComponent(token)}`,
+      //   { method: "post", headers: { Authorization: `Bearer ${VY_KEY}` }, muteHttpExceptions: true }
+      // );
+    }
+    ```
+
+    Save the file. Then, in the Apps Script editor, go to Triggers (the alarm-clock icon on the left sidebar), click "Add Trigger", and configure:
+
+    - Function: `onFormSubmit`
+    - Event source: From form
+    - Event type: **On form submit** (choose the installable "On form submit", not the simple trigger)
+
+    The installable trigger runs with your Google account's permissions, which is what allows it to call `deleteResponse`. The simple `onSubmit` trigger does not have that permission.
+
+    <Info>
+    `peek` is idempotent and does not burn the token. If you also process a downstream webhook (for example writing to a spreadsheet via Apps Script), it is safe to call `peek` again there. Call `consume` exactly once, when you are ready to mark the response as fully accepted.
+    </Info>
+  </Step>
+
+  <Step title="Wire your recruitment link">
+    In the VerifyYou dashboard, set the return path for your Flow to your pre-filled Google Form URL (from Step 1). Pass your participant identifier as `pass_params` so it is echoed back on the return URL alongside the token.
+
+    Your `POST /v3/initialize` call will look roughly like:
+
+    ```json
+    {
+      "verification_id": "your-flow-id",
+      "origin": "https://docs.google.com",
+      "return_path": "/forms/d/e/FORM_ID/viewform?entry.XXXXXXX={vyt}&entry.YYYYYYY={PROLIFIC_PID}",
+      "pass_params": { "PROLIFIC_PID": "PLATFORM_SUBSTITUTION_VALUE" }
+    }
+    ```
+
+    Replace `PLATFORM_SUBSTITUTION_VALUE` with however your recruitment platform injects the participant ID into a link (for example Prolific uses `{{%PROLIFIC_PID%}}`). See [/recruitment/prolific](/recruitment/prolific) for Prolific-specific wiring.
+  </Step>
+</Steps>
+
+## What this gives you
+
+A respondent without a valid token cannot leave a lasting response. The Apps Script trigger fires on each submission, calls `peek` to validate the token, and calls `deleteResponse` on any submission that fails. From your spreadsheet's point of view, bad submissions rarely appear, and when they do they are removed quickly.
+
+This is the same enforcement tier as the Tally and Jotform webhook flows: soft gate, auto-reject on submission.
+
+## Trade-offs
+
+<CardGroup cols={2}>
+  <Card title="What works well" icon="circle-check">
+    No platform fee or API upgrade required. Works with any Google Workspace or personal Google account. The installable trigger runs server-side with your credentials, so it is not bypassable from the browser. Deletion is fast enough that bad responses rarely appear in a linked spreadsheet.
+  </Card>
+  <Card title="Honest limits" icon="triangle-exclamation">
+    There is a brief window between submission and deletion where the response exists. It will not appear in exports if you delete promptly, but it is not a true gate (no question is blocked before it loads). If you need no exposure at all, use a Qualtrics personal link or an Alchemer login instead. See [/choosing-your-flow](/choosing-your-flow).
+  </Card>
+  <Card title="Apps Script quota" icon="clock">
+    Google Apps Script has a daily URL Fetch quota (roughly 20,000 calls on most plans). High-volume studies should check their quota in the Apps Script dashboard under Quotas. For very large studies, a true-gate platform may be more reliable.
+  </Card>
+  <Card title="No failure redirect" icon="arrow-right-arrow-left">
+    VerifyYou does not yet have a built-in failure redirect. Respondents who do not pass the liveness check land back on your return URL with `vyc=0` and a token that will not validate. The Apps Script trigger handles this correctly (it deletes the response), but the respondent experience after a failed check is determined by how your recruitment platform handles a screen-out. See your platform's docs for setting a screen-out URL.
+  </Card>
+</CardGroup>
+
+## Key lookup: `peek` vs `consume`
+
+| Call | Burns token? | When to use |
+|---|---|---|
+| `GET /v3/survey/peek?vyt=TOKEN` | No | Checking validity at submission, or checking again from a webhook |
+| `POST /v3/survey/consume?vyt=TOKEN` | Yes, one-time | When you are ready to accept and count the response as final |
+
+For Google Forms, calling `peek` in the Apps Script trigger and deleting bad responses is usually enough. If you want to prevent a token from being used in a second form submission (for example if a respondent re-opens the confirmation link), uncomment the `consume` call in the snippet after you are confident the response is good.
+
+## Testing
+
+1. Submit the form with a blank token field. The response should be deleted and not appear in your linked spreadsheet.
+2. Submit with a plausible-looking but invented string, for example `vyt_FAKEFAKEFAKEFAKEFAKEFAKE`. Same result.
+3. Complete a real VerifyYou check in test mode to get a genuine token. Submit the form with that token. The response should persist and `peek` should return `verified: true`.
+4. Submit a second time with the same token (without calling `consume`). `peek` is idempotent and still returns `verified: true` because the token has not been burned. If you called `consume` in step 3, this second submission will be deleted.
+
+Run these tests before sending your recruitment link to respondents.
