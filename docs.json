@@ -18,6 +18,12 @@
         ]
       },
       {
+        "group": "Set up",
+        "pages": [
+          "setup/alchemer"
+        ]
+      },
+      {
         "group": "Why it matters",
         "pages": [
           "why-verified-humans",

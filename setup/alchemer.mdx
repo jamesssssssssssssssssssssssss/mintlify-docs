@@ -1,0 +1,127 @@
+---
+title: "Set up VerifyYou on Alchemer"
+description: "Four steps, two tools, about fifteen minutes: a face check in front of your Alchemer survey so only real, unique humans reach your paid completes."
+---
+
+Every screener has one question it cannot actually enforce: **are they a person, and are they unique?** This guide sets that up on Alchemer, click by click — then shows exactly what your respondent sees, and what happens when someone comes back.
+
+<CardGroup cols={3}>
+  <Card title="What it is" icon="shield-check">A face check in front of your survey. Live person, unique person, then straight into your questions. About one to two cents a verification.</Card>
+  <Card title="What you do" icon="hand-pointer">Fifteen minutes of clicking, once per study. Our dashboard and your Alchemer builder. No code.</Card>
+  <Card title="What you get" icon="table-columns">Only real, unique humans reach your paid completes, plus a verified column against every response ID in your export.</Card>
+</CardGroup>
+
+## Exactly how it works
+
+Five moving parts, all of them simple:
+
+1. We generate a batch of **one-time passwords** for your study. Only we can mint them, and each one works exactly once. You load them into Alchemer's own password gate.
+2. You share **our study link** instead of your Alchemer link. Everyone who clicks it does the face check first: a live person, then a face we haven't already seen for this study.
+3. Each person who passes is handed **the next unused password** and forwarded to your survey, with the password riding along in the link.
+4. Your Alchemer login page reads the password from the link and **fills itself in**. Alchemer's own server checks it: valid and unused means the survey opens; anything else means zero questions shown.
+5. A spent password is **dead forever**, and the same face can never earn a second one. A shared link, a reused password, or a second attempt all hit a wall — and your export tells you exactly who came through verified.
+
+## Your setup, click by click
+
+<Steps>
+  <Step title="Create a verification and paste your survey link">
+    In the VerifyYou dashboard: click **New verification**, name the study, and pick **Alchemer** under "Where does your survey live?" — that choice is how we know to mint one-time passwords, the credential Alchemer's own gate understands. Paste your Alchemer survey link and click **Create verification**.
+
+    You get back two things: your **study link** (the one you share; your Alchemer link stays private) and your **one-time password list**.
+
+    <Frame caption="Dashboard mockup — a simple screen we are finishing now. What powers it, the hosted check and per-person single-use credentials, is live in the product today.">
+      <img src="/images/setup/mock-create.png" alt="VerifyYou new verification screen" />
+    </Frame>
+  </Step>
+  <Step title="Paste your passwords into Alchemer">
+    Open your survey in the builder. On **page 1**, click **Add New: Action**, pick **Login/Password**, and choose **"Individual (one-time) passwords that deactivate after use."** Paste your password list, one per line. Keep this action alone on page 1 — it gates everything after it.
+
+    <Frame caption="Alchemer's own UI, and Alchemer's own wording: passwords 'deactivate after use.' Their server enforces the gate before a single question shows.">
+      <img src="/images/setup/alchemer-login-editor-2.png" alt="Alchemer one-time passwords editor" />
+    </Frame>
+  </Step>
+  <Step title="Set the password to fill itself in">
+    In the same action, open the **Display** tab and set **Pre-populate Password** to the merge code `[url("vypw")]`. Click **Save Action**. Now the password each verified person carries on their link lands in the box on its own — they type nothing.
+
+    <Frame caption="Alchemer's own UI. The example shown uses a contact merge code; yours uses the URL one above.">
+      <img src="/images/setup/alchemer-prepopulate.png" alt="Alchemer pre-populate password setting" />
+    </Frame>
+  </Step>
+  <Step title="Share your study link">
+    Paste the study link from step 1 into your panel, your sample provider, or your invite email. That's it — everyone who reaches your survey came through the check.
+  </Step>
+</Steps>
+
+## What your respondent sees
+
+Three screens, a few seconds, then they are answering your questions.
+
+<CardGroup cols={3}>
+  <Card title="1. The scan" icon="camera">
+    <img src="/images/setup/mock-scan-framed.png" alt="The face scan" />
+    A quick face check in the camera. Live person, then unique person. No photo is shared with you or with Alchemer, only a yes or no. *(Scan step, illustrated.)*
+  </Card>
+  <Card title="2. They pass" icon="circle-check">
+    <img src="/images/setup/vy-check-approved-framed.png" alt="Approved screen" />
+    Live and unique. Real product screen, shown with our demo brand where yours would appear. They are sent straight on to your survey.
+  </Card>
+  <Card title="3. The gate is open" icon="unlock">
+    <img src="/images/setup/mock-prefilled-framed.png" alt="Alchemer login pre-filled" />
+    Your Alchemer login page, in your own survey theme, password already filled in. One tap and they are answering your questions. *(Illustrated; see the note below.)*
+  </Card>
+</CardGroup>
+
+And the two ways it ends instead, for the traffic you did not want:
+
+<CardGroup cols={2}>
+  <Card title="Not unique" icon="user-xmark">
+    <img src="/images/setup/vy-check-denied-framed.png" alt="Denied screen" />
+    A face we have already seen for this study is denied. No password, no survey, no complete to pay for. This is your repeat taker. *(Real product screen.)*
+  </Card>
+  <Card title="Not live" icon="robot">
+    <img src="/images/setup/vy-check-liveness-failure-framed.png" alt="Liveness failure screen" />
+    A replay, a photo, or a generated face fails the scan. Real people in bad lighting get a retry; bots do not get lucky. *(Real product screen.)*
+  </Card>
+</CardGroup>
+
+## What happens when they come back
+
+<AccordionGroup>
+  <Accordion title="Back to the same study: a dead end, on purpose">
+    Their face already earned its one password, and that password is spent. A second device, a new browser, a cleared cache: none of it helps, because the check recognizes the **face**, not the machine. Your study stays one person, one response.
+  </Accordion>
+  <Accordion title="Back for your next study: welcome back">
+    A returning verified human is recognized and breezes through with less friction, then gets a **fresh one-time password** for the new study — so uniqueness still holds per study. You are never charged twice for the same human. And if you want a full re-scan on every study, that is a setting, and it is your call.
+  </Accordion>
+</AccordionGroup>
+
+<Frame caption="Real product — the return moment. A respondent can attach their number or email once, and their verified status follows them across devices and future studies.">
+  <img src="/images/setup/vy-check-return-framed.png" alt="Verify once, use anywhere screen" style={{ maxWidth: '300px' }} />
+</Frame>
+
+## What you get back
+
+<CardGroup cols={2}>
+  <Card title="In your Alchemer export" icon="file-csv">
+    <img src="/images/setup/alchemer-urlvar-exports.png" alt="Alchemer export with URL variables" />
+    Your normal CSV export with **"Include URL Variables"** checked — each row carries the verification alongside the response ID you already use.
+  </Card>
+  <Card title="In your VerifyYou activity log" icon="list-check">
+    <img src="/images/setup/vy-real-activity-log.png" alt="VerifyYou activity log" />
+    Who verified, when, and the trust level. Join it to your export and you have a **verified / not verified** column on every response.
+  </Card>
+</CardGroup>
+
+## The fifteen-minute proof
+
+No real study needed. Make up a survey, put the gate in front of it, and try to beat it yourself.
+
+<Steps>
+  <Step title="Set it up">Steps 1 through 4 above, on a made-up survey. About fifteen minutes of clicking, no code.</Step>
+  <Step title="Try to beat it">Take the survey through the study link; it just works. Try to take it again, and you can't. Try the raw Alchemer URL with no password, and you get nothing.</Step>
+  <Step title="Check the ledger">Export the CSV and see the verified column against your response IDs. Compare verified against unverified on a real dataset — that comparison, run by you and not by us, is worth more than anything we could say.</Step>
+</Steps>
+
+<Note>
+**Where this stands, honestly.** Two details we confirm live in the builder during a first test: exactly when Alchemer marks a one-time password as used, and whether the pre-filled login page can skip itself entirely. Worst case, the respondent sees a filled box and taps one button. Setup detail and platform trade-offs: [the Alchemer guide](/survey/alchemer) and [the screen-by-screen walkthrough](/walkthroughs/alchemer).
+</Note>
