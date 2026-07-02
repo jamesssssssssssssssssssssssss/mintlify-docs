@@ -1,0 +1,150 @@
+---
+title: "Alchemer, screen by screen"
+description: "The exact researcher experience on Alchemer, shown with the real VerifyYou dashboard, the real Alchemer UI, and mockups only where a feature is still being built."
+---
+
+This is the researcher flow from [the Alchemer guide](/survey/alchemer), shown screen by screen. Every image is honest about what it is: **real VerifyYou screens** come from our component library (the deployed Storybook), **real Alchemer screens** come from Alchemer's own documentation, and the two **target-state mockups** are labeled COMING because they show features on the build list, not in the product.
+
+<Frame caption="The whole journey. The gate hands each verified human a one-time password; Alchemer's own server enforces it before any content shows.">
+  <img src="/images/alchemer/flow-diagram.svg" alt="End-to-end flow: panel to HumanCheck to password handout to Alchemer login to survey, with fails routed to the panel screen-out" />
+</Frame>
+
+## Part 1 — In VerifyYou (about 3 minutes)
+
+The researcher creates a verification, points it at their survey, and copies the gate link. This is the real dashboard today.
+
+<Frame caption="Real product — the Flows screen. Each verification has a Label, a Redirect URL (where verified respondents land), and IDs.">
+  <img src="/images/alchemer/vy-real-flows.png" alt="VerifyYou Flows screen listing verifications with Label, Redirect URL, ID, External ID" />
+</Frame>
+
+<Frame caption="Real product — the configurator. One Redirect URL: where users land after completing the verification. This is the success destination; there is no failure redirect yet, which is exactly the gap the build closes.">
+  <img src="/images/alchemer/vy-real-configurator.png" alt="VerifyYou verification configurator with a Verification selector and a single Redirect URL field" />
+</Frame>
+
+<Frame caption="Target-state mockup (COMING) — the same screen with the two fields the researcher flow adds: a screen-out destination for failed respondents, and a participant ID parameter carried through the check.">
+  <img src="/images/alchemer/vy-create-verification.png" alt="Mockup of the create-verification screen with screen-out redirect and participant ID parameter fields marked as coming" />
+</Frame>
+
+<Note>
+One discovery worth naming: the product already generates **per-person, single-use links**. The Verification Invites screen below is live in the component library today — each invite is a unique link locked to one identity, with an expiry and a claimed-once state. The one-time password pool for Alchemer is this same primitive pointed at a survey, not a new invention.
+</Note>
+
+<Frame caption="Real product — Verification Invites. Unique link per person, expiry in days, Unclaimed / Claimed / Revoked states. The password pool extends this existing machinery.">
+  <img src="/images/alchemer/vy-real-invites.png" alt="VerifyYou Verification Invites screen generating unique per-email invite links with expiry and claim status" />
+</Frame>
+
+## Part 2 — In Alchemer, the soft gate (about 10 minutes, no code)
+
+Level 1 from the guide: capture the token, disqualify anyone without one. Every screen below is Alchemer's real UI.
+
+<Steps>
+  <Step title="Capture the token and participant ID as Hidden Values">
+    On page 1, add **Action → Hidden Value**, and populate it with the merge code `[url("vyt")]`. Add a second for `[url("pid")]`. Keep page 1 action-only.
+
+    <Frame caption="Real Alchemer UI — the Hidden Value action. 'Populate with the following' takes a merge code; ours is [url(&quot;vyt&quot;)].">
+      <img src="/images/alchemer/alchemer-hidden-value.png" alt="Alchemer Hidden Value action editor with the populate field and Select a Merge Code link" />
+    </Frame>
+  </Step>
+  <Step title="Point logic at the URL variable">
+    Alchemer's logic builder lists **URL Variable** as a first-class condition, under First Party Data. The rule: if `vyt` is empty, disqualify.
+
+    <Frame caption="Real Alchemer UI — the logic condition picker. URL Variable is a native condition source.">
+      <img src="/images/alchemer/alchemer-urlvar-logic.png" alt="Alchemer logic rule condition dropdown showing URL Variable under First Party Data" />
+    </Frame>
+  </Step>
+  <Step title="Send disqualified respondents back to the panel">
+    The **URL Redirect** action is built for exactly this: "can be used upon completion, or in combination with disqualification." Set the destination to the panel screen-out URL and flip **Disqualify Respondent** to Yes.
+
+    <Frame caption="Real Alchemer UI — the Actions catalog. URL Redirect: send respondents to an external website, in combination with disqualification.">
+      <img src="/images/alchemer/alchemer-redirect-1.png" alt="Alchemer actions catalog highlighting the URL Redirect action" />
+    </Frame>
+
+    <Frame caption="Real Alchemer UI — the URL Redirect editor: destination URL, a Disqualify Respondent toggle, and a message for anyone not redirected.">
+      <img src="/images/alchemer/alchemer-redirect-2.png" alt="Alchemer URL Redirect action editor with Disqualify Respondent option, URL field, and disqualified message" />
+    </Frame>
+  </Step>
+</Steps>
+
+## Part 3 — The true gate: one-time passwords (Level 2)
+
+The strongest no-code gate on any survey platform. Alchemer's own server refuses entry without a valid, unused password — before a single question renders.
+
+<Steps>
+  <Step title="Add the Login/Password action to page 1">
+    Page 1, **Add New: Action → Login/Password**. Alchemer recommends it sit alone on the page — it gates everything after it.
+
+    <Frame caption="Real Alchemer UI — adding an Action to an empty page 1.">
+      <img src="/images/alchemer/alchemer-add-login-action.png" alt="Alchemer page 1 with the Add New Action link highlighted" />
+    </Frame>
+  </Step>
+  <Step title="Choose one-time passwords">
+    Three access modes. The middle one is ours: **"Individual (one-time) passwords that deactivate after use."** Paste the password list from VerifyYou straight into the box, one per line — no CSV needed in this mode.
+
+    <Frame caption="Real Alchemer UI — the three access modes. Note the one-time mode's own wording: passwords 'deactivate after use.'">
+      <img src="/images/alchemer/alchemer-login-editor-1.png" alt="Alchemer Login/Password action editor showing the three access type radio options" />
+    </Frame>
+
+    <Frame caption="Real Alchemer UI — one-time passwords pasted one per line, or generated by Alchemer.">
+      <img src="/images/alchemer/alchemer-login-editor-2.png" alt="Alchemer one-time passwords mode with the Add New Passwords box and Generate Random Passwords link" />
+    </Frame>
+
+    <Frame caption="Real Alchemer UI — the spreadsheet mode's settings, including 'Single Use Password — can only be used once' and the note that the action must sit alone on the first page.">
+      <img src="/images/alchemer/alchemer-login-editor-3.png" alt="Alchemer Lookup ID/Password mode showing the Single Use Password option and CSV upload" />
+    </Frame>
+  </Step>
+  <Step title="Pre-fill the password from the URL">
+    The action's Display tab has **Pre-populate Password**, which takes a merge code. Set it to `[url("vypw")]` and the password the gate handed out arrives already filled in — the respondent types nothing.
+
+    <Frame caption="Real Alchemer UI — Pre-populate Password with a merge code. The example uses a contact merge code; the researcher flow uses [url(&quot;vypw&quot;)].">
+      <img src="/images/alchemer/alchemer-prepopulate.png" alt="Alchemer Login/Password Display tab with Pre-populate Username and Pre-populate Password merge code fields" />
+    </Frame>
+  </Step>
+  <Step title="What a blocked respondent sees">
+    Wrong password, used password, or no password: an error message the researcher writes, and zero survey content.
+
+    <Frame caption="Real Alchemer UI — the login-failure message. This is the whole experience for anyone without a valid unused password.">
+      <img src="/images/alchemer/alchemer-login-error.png" alt="Alchemer error message configuration for failed login" />
+    </Frame>
+  </Step>
+  <Step title="Where the passwords come from (ours to build)">
+    VerifyYou mints the pool, hands one password to each verified human, and tracks the states. This is the Invites machinery pointed at a survey.
+
+    <Frame caption="Target-state mockup (COMING) — the one-time password pool: generated, handed to a verified human, redeemed in Alchemer.">
+      <img src="/images/alchemer/vy-password-pool.png" alt="Mockup of the VerifyYou one-time password pool screen with statuses and CSV download" />
+    </Frame>
+  </Step>
+</Steps>
+
+## Part 4 — After fielding: the verified column
+
+The join a real researcher asked us for, word for word: "if I had a column that said verified, not verified, I could compare them."
+
+<Frame caption="Real Alchemer UI — the CSV export has an 'Include URL Variables' checkbox, so every response carries vyt and pid.">
+  <img src="/images/alchemer/alchemer-urlvar-exports.png" alt="Alchemer CSV export options with Include URL Variables checked" />
+</Frame>
+
+<Frame caption="Real product — the Activity Log: who verified, when, with what identity and trust level. Join it on the participant ID against the Alchemer export. A CSV export of this view is on the build list.">
+  <img src="/images/alchemer/vy-real-activity-log.png" alt="VerifyYou Activity Log with date verified, identity, external ID, guest ID, and trust level columns" />
+</Frame>
+
+<Frame caption="Real product — the dashboard home. The outcome language is already the researcher's language: Verified, Blocked (collision), Liveness failed, Abandoned.">
+  <img src="/images/alchemer/vy-real-dashboard-home.png" alt="VerifyYou dashboard home with verified humans, threats blocked, and sessions-by-outcome chart" />
+</Frame>
+
+## The two things only a live test can settle
+
+<AccordionGroup>
+  <Accordion title="When does a one-time password burn?">
+    Alchemer's docs don't say whether a single-use password is consumed at login-click or only at survey completion. The Save-and-Continue feature implies burn-at-login. Thirty minutes in a trial account settles it: issue one password, log in, abandon, retry.
+  </Accordion>
+  <Accordion title="Is the pre-filled login truly zero-click?">
+    Pre-populate plus an auto-submitting page-1 should make the gate invisible to verified respondents. The pieces are all documented; the combination isn't vendor-narrated end to end. Worst case, the respondent sees a pre-filled field and clicks one button.
+  </Accordion>
+</AccordionGroup>
+
+## Where to go next
+
+- The full flow and setup detail: [Alchemer](/survey/alchemer)
+- Why the token can't be faked or reused: [The token](/the-token)
+- What this costs on each recruitment platform: [Recruitment overview](/recruitment/overview)
+- The engineering behind the gate: [Architecture](/build/architecture)

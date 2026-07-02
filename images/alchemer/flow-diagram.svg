@@ -1,0 +1,75 @@
+<svg viewBox="0 0 1560 560" xmlns="http://www.w3.org/2000/svg" font-family="Inter, -apple-system, sans-serif">
+  <rect width="1560" height="560" fill="#F7F5F2"/>
+  <!-- lane labels -->
+  <text x="40" y="52" font-size="15" font-weight="700" fill="#2B2B28">The respondent's journey — Alchemer, Level 2 (one-time password gate)</text>
+
+  <!-- Step 1: Panel -->
+  <rect x="40" y="110" width="240" height="120" rx="14" fill="#FFFFFF" stroke="#E8E4DD"/>
+  <text x="60" y="145" font-size="12" font-weight="700" fill="#8A857C" letter-spacing="1">1 · RECRUITMENT</text>
+  <text x="60" y="172" font-size="15" font-weight="600" fill="#2B2B28">Prolific / panel / list</text>
+  <text x="60" y="196" font-size="12.5" fill="#5C574E">Study URL = the gate link,</text>
+  <text x="60" y="214" font-size="12.5" fill="#5C574E">participant id rides along</text>
+
+  <!-- arrow -->
+  <path d="M280 170 H340" stroke="#B7B1A6" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 2: HumanCheck -->
+  <rect x="344" y="110" width="250" height="120" rx="14" fill="#34A853"/>
+  <text x="364" y="145" font-size="12" font-weight="700" fill="#D8F0DF" letter-spacing="1">2 · THE HUMANCHECK</text>
+  <text x="364" y="172" font-size="15" font-weight="600" fill="#FFFFFF">Hosted face scan</text>
+  <text x="364" y="196" font-size="12.5" fill="#EAF6EE">Liveness, then uniqueness.</text>
+  <text x="364" y="214" font-size="12.5" fill="#EAF6EE">A few seconds.</text>
+
+  <!-- pass arrow -->
+  <path d="M594 150 C660 150 660 150 720 150" stroke="#34A853" stroke-width="2.5" marker-end="url(#arrg)"/>
+  <text x="620" y="138" font-size="12" font-weight="700" fill="#1E7A3C">PASS</text>
+  <!-- fail arrow -->
+  <path d="M594 200 C660 200 640 330 700 330" stroke="#B3402F" stroke-width="2.5" marker-end="url(#arrr)"/>
+  <text x="620" y="248" font-size="12" font-weight="700" fill="#B3402F">FAIL</text>
+
+  <!-- Step 3: handout -->
+  <rect x="724" y="90" width="270" height="140" rx="14" fill="#FFFFFF" stroke="#CDE8D6" stroke-width="2"/>
+  <text x="744" y="123" font-size="12" font-weight="700" fill="#8A857C" letter-spacing="1">3 · THE HANDOUT (OURS)</text>
+  <text x="744" y="150" font-size="15" font-weight="600" fill="#2B2B28">Next unused password</text>
+  <text x="744" y="174" font-size="12.5" fill="#5C574E">Gate hands this human one</text>
+  <text x="744" y="192" font-size="12.5" fill="#5C574E">pool password, redirects to</text>
+  <text x="744" y="210" font-size="12.5" fill="#5C574E" font-family="ui-monospace, monospace">…?vypw=vyp_k27d…&amp;pid=…</text>
+
+  <!-- arrow -->
+  <path d="M994 160 H1054" stroke="#B7B1A6" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 4: Alchemer login -->
+  <rect x="1058" y="90" width="240" height="140" rx="14" fill="#FFFFFF" stroke="#E8E4DD"/>
+  <text x="1078" y="123" font-size="12" font-weight="700" fill="#8A857C" letter-spacing="1">4 · ALCHEMER ENFORCES</text>
+  <text x="1078" y="150" font-size="15" font-weight="600" fill="#2B2B28">Login/Password page</text>
+  <text x="1078" y="174" font-size="12.5" fill="#5C574E">Password arrives pre-filled.</text>
+  <text x="1078" y="192" font-size="12.5" fill="#5C574E">Wrong or used password =</text>
+  <text x="1078" y="210" font-size="12.5" fill="#5C574E">zero survey content.</text>
+
+  <!-- arrow -->
+  <path d="M1298 160 H1358" stroke="#B7B1A6" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Step 5: survey -->
+  <rect x="1362" y="110" width="160" height="100" rx="14" fill="#FFFFFF" stroke="#E8E4DD"/>
+  <text x="1382" y="145" font-size="12" font-weight="700" fill="#8A857C" letter-spacing="1">5 · SURVEY</text>
+  <text x="1382" y="172" font-size="14.5" font-weight="600" fill="#2B2B28">A clean complete</text>
+  <text x="1382" y="194" font-size="12.5" fill="#5C574E">One human, once.</text>
+
+  <!-- fail path: screen-out -->
+  <rect x="704" y="290" width="290" height="110" rx="14" fill="#FBEEEC" stroke="#EAC8C1"/>
+  <text x="724" y="323" font-size="12" font-weight="700" fill="#B3402F" letter-spacing="1">SCREEN-OUT</text>
+  <text x="724" y="349" font-size="14.5" font-weight="600" fill="#2B2B28">Back to the panel, coded</text>
+  <text x="724" y="371" font-size="12.5" fill="#5C574E">Bot, deepfake, duplicate face, or decline.</text>
+  <text x="724" y="389" font-size="12.5" fill="#5C574E">They never see the survey. You never pay a complete.</text>
+
+  <!-- bottom strip: raw URL attacker -->
+  <rect x="40" y="440" width="1482" height="80" rx="14" fill="#FFFFFF" stroke="#E8E4DD" stroke-dasharray="6 5"/>
+  <text x="64" y="472" font-size="12" font-weight="700" fill="#8A857C" letter-spacing="1">THE BYPASS THAT DOESN'T WORK</text>
+  <text x="64" y="497" font-size="13" fill="#5C574E">Someone with the raw Alchemer URL hits the same login page with no valid unused password: no content. Uniqueness means a verified person can't earn a second password, so links and passwords aren't shareable either.</text>
+
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9" fill="none" stroke="#B7B1A6" stroke-width="1.6"/></marker>
+    <marker id="arrg" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9" fill="none" stroke="#34A853" stroke-width="1.8"/></marker>
+    <marker id="arrr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9" fill="none" stroke="#B3402F" stroke-width="1.8"/></marker>
+  </defs>
+</svg>

@@ -59,6 +59,12 @@
         ]
       },
       {
+        "group": "Walkthroughs",
+        "pages": [
+          "walkthroughs/alchemer"
+        ]
+      },
+      {
         "group": "Build spec (for us)",
         "pages": [
           "build/architecture",
